@@ -68,7 +68,92 @@ edge is closer than r_robot only along the exact diagonal direction. Also
 note /scan's "minimum valid range" is measured from the LiDAR's own mount
 point (0.30, 0, 0.19 relative to base_link, per model.sdf), not from
 base_link's origin - the two are related but not numerically interchangeable,
-and this script does not attempt that reconciliation.
+and this script does not attempt that reconciliation. GT_PLAUSIBLE_BOUND_M
+below is a scenario-specific sanity bound (this room/obstacle layout is tiny),
+not a physical constant and not proof that an accepted pose is correct.
+
+VERDICT PRECEDENCE (checked in this order, every time):
+1. FAIL - trustworthy evidence demonstrates a defined failure condition
+   (controller never engaged /cmd_vel, or geometric clearance went negative).
+   A demonstrated failure is never hidden by an unrelated outage.
+2. INCONCLUSIVE - required evidence was missing, stale, invalid, or affected
+   by a simulation-time anomaly during recording (scan/odom staleness after
+   a healthy prerun, a sim-time backward jump, incomplete/invalid required
+   ground-truth sampling, or odom-only clearance). None of these is itself a
+   demonstrated behavioral failure - a sensor outage or invalid sample makes
+   the run's evidence untrustworthy, not the robot's behavior wrong.
+3. PASS - only if neither of the above triggered: every required pass
+   criterion was met on trustworthy evidence for the whole recorded run.
+A zero-velocity /cmd_vel command with fresh sensor data is not automatically
+a failure (it may be a correct safe stop) - it is reported as a fact for a
+human to interpret, never auto-classified either way. This is distinct
+from /cmd_vel NEVER going non-zero across the entire recorded run, which
+IS classified FAIL (see "controller never engaged" above).
+
+SCENARIO-SPECIFIC CAVEAT on that "never engaged" FAIL rule: it is specific
+to this baseline scenario, where a static obstacle sits directly ahead of
+the robot's default spawn pose, so some initial motion is the expected
+correct behavior. Do not generalize this rule to a different scenario
+where remaining stationary for the whole run could itself be correct (e.g.
+a scenario with no reachable obstacle, or one that starts the robot
+already in a state where stopping is the right call) - in such a scenario,
+treating "never went non-zero" as a FAIL would be wrong, and this check
+would need to be reconsidered, not reused as-is.
+
+SCAN_TIMEOUT FALLBACK: by default (--allow-scan-timeout-fallback is OFF),
+an unavailable, unset, wrongly-typed, non-finite, zero, or negative live
+scan_timeout parameter on vfh_plus_node causes an explicit INCONCLUSIVE
+preflight failure - the run does not proceed, and no timeout is invented.
+Passing --allow-scan-timeout-fallback opts into substituting
+--scan-timeout-fallback instead, and that substitution is always recorded
+loudly in the summary (that it was used, its value, and why the live value
+could not be used) - it is never silent.
+
+CMD_VEL FRESHNESS: vfh_plus_node.py republishes /cmd_vel from one of two
+places - its scan_callback (driven by /scan arrival, ~10 Hz at the LiDAR's
+configured update_rate) or its own watchdog_callback, which runs on a fixed
+0.1 s timer regardless of scan/odom health and publishes a zero Twist once
+staleness is detected. A controller process that is actually still alive
+therefore republishes /cmd_vel at least once per ~0.1 s under every
+condition - healthy, stale-upstream, or stopped. CMD_VEL_FRESH_TIMEOUT_S
+below (0.3 s = 3x that period, generous enough to absorb this validator's
+own sampling jitter) is deliberately NOT the same as scan_timeout (0.5 s):
+reusing scan_timeout would tolerate a dead controller for up to 5x longer
+than its own expected republish interval before detecting it. A row whose
+/cmd_vel has not been refreshed within this window is treated as invalid
+evidence (the controller may have crashed while /scan or /odom, driven by
+other still-alive nodes, remain fresh) and caps the run at INCONCLUSIVE -
+it is never confused with a demonstrated obstacle-avoidance FAIL, and a
+fresh zero-velocity command (still actively being republished, just with
+zero value) is never treated as stale or as a failure merely because its
+value is zero.
+
+ASSUMPTION DISCLOSURE: the 0.3 s figure above is a conservative threshold
+derived from reading vfh_plus_node.py's source (its timer period and
+scan-driven publish path) - it has NOT been measured against that
+controller's actual live publish cadence under real DDS/executor
+scheduling jitter. If a live run shows this threshold is too tight (false
+staleness under normal jitter) or too loose, it should be revisited against
+real measurements, not assumed correct from source-reading alone.
+
+GROUND-TRUTH EVIDENCE MODE: when --ground-truth is passed, this run is in
+ground-truth validation mode, and a failed ground-truth query on a given
+row leaves that row's geom_clearance_m/clearance_source as None rather
+than silently substituting odometry - odometry-derived clearance is only
+ever used when --ground-truth was not requested at all (odometry-only
+mode). Ground truth is required for a PASS in this baseline validation:
+without --ground-truth, or with any row's ground-truth sampling
+incomplete, the run is capped at INCONCLUSIVE regardless of how clean
+everything else looks.
+
+SIMULATION-TIME REGRESSION DETECTION LIMITATION: sim_time_regression only
+compares each recorded row's t_sim_s against the immediately preceding
+recorded row's - it has no visibility between samples. A backward jump
+followed by a full recovery that both happen strictly between two
+recorded samples (faster than this script's own sampling rate) would not
+be detected. Widening this would require either a higher sampling rate or
+a separate out-of-band clock monitor, neither of which this hardening
+pass implements.
 """
 
 import argparse
@@ -83,6 +168,7 @@ import time
 import rclpy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
+from rcl_interfaces.msg import ParameterType
 from rcl_interfaces.srv import GetParameters
 from rclpy.node import Node
 from rclpy.parameter import Parameter
@@ -111,14 +197,29 @@ EXPECTED_CONTROLLER_NODE = "vfh_plus_node"
 EXCLUDED_CONTROLLER_NODE = "simple_obstacle_avoidance"
 SPAWN_MODEL_NAME = "masonassist"  # must match launch/gazebo.launch.py's ros_gz_sim create -name
 
-FALLBACK_SCAN_TIMEOUT_S = 0.5  # only used if the live node's own parameter can't be queried
+FALLBACK_SCAN_TIMEOUT_S = 0.5  # only used if --allow-scan-timeout-fallback is explicitly passed
+
+# See the module docstring's CMD_VEL FRESHNESS section: 3x vfh_plus_node's own
+# 0.1s watchdog/scan-driven republish period, deliberately not scan_timeout.
+# This is a conservative, SOURCE-DERIVED threshold (from reading the
+# controller's timer/publish paths) - it has not been measured against that
+# controller's actual live publish cadence under real DDS/executor
+# scheduling jitter. Revisit against live measurements before trusting it
+# as tuned, not just plausible.
+CMD_VEL_FRESH_TIMEOUT_S = 0.3
+
+# Scenario-specific sanity bound on parsed ground-truth coordinates (this
+# room/obstacle layout is a few meters across) - not a physical constant,
+# and accepting a value under this bound is not proof the pose is correct.
+GT_PLAUSIBLE_BOUND_M = 50.0
 
 CSV_FIELDS = [
-    "t_sim_s", "t_wall_s",
-    "scan_age_s", "scan_min_range_m",
-    "odom_age_s", "odom_x", "odom_y", "odom_yaw_deg",
-    "cmd_vel_age_s", "cmd_vel_linear_x", "cmd_vel_angular_z",
-    "gt_sampled", "gt_x", "gt_y", "gt_yaw_deg", "gt_sample_wall_latency_s",
+    "t_sim_s", "t_wall_s", "tick_duration_s", "sample_delayed",
+    "scan_age_s", "scan_min_range_m", "scan_fresh",
+    "odom_age_s", "odom_x", "odom_y", "odom_yaw_deg", "odom_fresh",
+    "sim_time_regression",
+    "cmd_vel_age_s", "cmd_vel_fresh", "cmd_vel_linear_x", "cmd_vel_angular_z",
+    "gt_sampled", "gt_x", "gt_y", "gt_yaw_deg", "gt_sample_wall_latency_s", "gt_error",
     "geom_clearance_m", "clearance_source",
 ]
 
@@ -135,6 +236,12 @@ def yaw_from_quaternion(q):
     return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
 
+def is_fresh(age_s, timeout_s):
+    """A negative age (simulation-time reset/backward jump) is never fresh -
+    it is invalid, not 'fresher than fresh'."""
+    return age_s is not None and 0.0 <= age_s <= timeout_s
+
+
 def box_clearance(px, py, cx, cy, half_extent, r_robot):
     """Planar distance from a circle of radius r_robot centered at (px, py)
     to the nearest surface of an axis-aligned square, minus r_robot. See the
@@ -145,25 +252,58 @@ def box_clearance(px, py, cx, cy, half_extent, r_robot):
     return math.hypot(dx, dy) - r_robot
 
 
+def _parse_gz_model_pose_output(stdout_text):
+    """Pure parsing function - no subprocess involved, so it is directly
+    unit-testable against representative fixture text. Returns (x, y,
+    yaw_rad) or raises ValueError with a specific reason.
+
+    UNVERIFIED ASSUMPTION, not re-confirmed against a live Gazebo process in
+    this hardening pass: that the second-to-last and last bracketed numeric
+    groups in `gz model -p`'s text output are position and orientation(rpy)
+    respectively. This mirrors this project's earlier SLAM-mapping scratchpad
+    convention but live compatibility is not claimed here."""
+    nums = [list(map(float, m.split())) for m in re.findall(r"\[([-\d\. e]+)\]", stdout_text)]
+    if len(nums) < 2:
+        raise ValueError(f"expected at least 2 bracketed numeric groups, found {len(nums)}")
+    pos, ori = nums[-2], nums[-1]
+    if len(pos) < 2 or len(ori) < 3:
+        raise ValueError("position or orientation group has too few components")
+    x, y, yaw = pos[0], pos[1], ori[2]
+    if not all(math.isfinite(v) for v in (x, y, yaw)):
+        raise ValueError(f"non-finite value parsed: x={x} y={y} yaw={yaw}")
+    if abs(x) > GT_PLAUSIBLE_BOUND_M or abs(y) > GT_PLAUSIBLE_BOUND_M:
+        raise ValueError(f"implausible position for this scenario: x={x} y={y} "
+                          f"(sanity bound={GT_PLAUSIBLE_BOUND_M} m, not a physical limit)")
+    return x, y, yaw
+
+
 def query_ground_truth_pose(model_name, timeout_s):
-    """Blocking `gz model -p` subprocess call (same parsing approach used in
-    this project's earlier SLAM-mapping scratchpad scripts). Returns
-    (x, y, yaw_rad, wall_latency_s), or None on failure/timeout/parse error."""
+    """Blocking `gz model -p` subprocess call. Returns a dict:
+    {"ok": True, "x", "y", "yaw", "latency"} on success, or
+    {"ok": False, "error": <reason>, "latency"} on any failure - a failed or
+    invalid sample is always reported explicitly, never silently dropped or
+    replaced with fabricated coordinates."""
     t0 = time.monotonic()
     try:
-        out = subprocess.run(
+        proc = subprocess.run(
             ["gz", "model", "-m", model_name, "-p"],
             capture_output=True, text=True, timeout=timeout_s,
-        ).stdout
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return None
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"gz model query timed out after {timeout_s}s",
+                "latency": time.monotonic() - t0}
+    except (FileNotFoundError, OSError) as e:
+        return {"ok": False, "error": f"gz model query failed to start: {e}",
+                "latency": time.monotonic() - t0}
     latency = time.monotonic() - t0
-    nums = [list(map(float, m.split())) for m in re.findall(r"\[([-\d\. e]+)\]", out)]
-    if len(nums) < 2:
-        return None
-    x, y = nums[-2][0], nums[-2][1]
-    yaw = nums[-1][2]
-    return x, y, yaw, latency
+    if proc.returncode != 0:
+        return {"ok": False, "latency": latency,
+                "error": f"gz model exited {proc.returncode}, stderr: {proc.stderr.strip()[:200]!r}"}
+    try:
+        x, y, yaw = _parse_gz_model_pose_output(proc.stdout)
+    except ValueError as e:
+        return {"ok": False, "error": f"parse failure: {e}", "latency": latency}
+    return {"ok": True, "x": x, "y": y, "yaw": yaw, "latency": latency}
 
 
 class ValidationRecorder(Node):
@@ -222,22 +362,34 @@ class ValidationRecorder(Node):
         p = self.latest_odom.pose.pose
         return p.position.x, p.position.y, yaw_from_quaternion(p.orientation)
 
-    def query_live_scan_timeout(self, fallback, timeout_s=3.0):
+    def query_live_scan_timeout(self, timeout_s=3.0):
         """Fetch vfh_plus_node's actual scan_timeout parameter via its own
-        get_parameters service, so freshness is checked against the live
-        running configuration rather than a hardcoded duplicate of its
-        default. Falls back to `fallback` (loudly, via the returned bool)
-        if the service is unavailable."""
+        get_parameters service, checking both type and value - never
+        fabricates or assumes a timeout. Returns (value_or_None, is_live,
+        reason_or_None). value is only non-None when is_live is True; the
+        caller decides whether an explicit fallback is permitted."""
         client = self.create_client(GetParameters, f"/{EXPECTED_CONTROLLER_NODE}/get_parameters")
         try:
             if not client.wait_for_service(timeout_sec=timeout_s):
-                return fallback, False
+                return None, False, f"/{EXPECTED_CONTROLLER_NODE}/get_parameters service unavailable"
             future = client.call_async(GetParameters.Request(names=["scan_timeout"]))
             rclpy.spin_until_future_complete(self, future, timeout_sec=timeout_s)
             result = future.result() if future.done() else None
-            if result is None or not result.values:
-                return fallback, False
-            return result.values[0].double_value, True
+            if result is None:
+                return None, False, "get_parameters call did not complete"
+            if not result.values:
+                return None, False, "get_parameters response had no values"
+            pv = result.values[0]
+            if pv.type != ParameterType.PARAMETER_DOUBLE:
+                return None, False, (f"scan_timeout has unexpected parameter type {pv.type} "
+                                      f"(expected PARAMETER_DOUBLE={ParameterType.PARAMETER_DOUBLE}; "
+                                      f"0=PARAMETER_NOT_SET means the parameter does not exist)")
+            value = pv.double_value
+            if not math.isfinite(value):
+                return None, False, f"scan_timeout is non-finite ({value})"
+            if value <= 0:
+                return None, False, f"scan_timeout is zero or negative ({value})"
+            return value, True, None
         finally:
             self.destroy_client(client)
 
@@ -262,16 +414,26 @@ def run_prerun_checks(node, args):
     if reasons:
         return INCONCLUSIVE, reasons, None
 
-    scan_timeout, is_live = node.query_live_scan_timeout(args.scan_timeout_fallback)
-    reasons.append(
-        f"scan_timeout={scan_timeout}s ({'queried live from ' + EXPECTED_CONTROLLER_NODE if is_live else 'FALLBACK ASSUMED - live query failed'})"
-    )
+    scan_timeout, is_live, live_fail_reason = node.query_live_scan_timeout()
+    if is_live:
+        reasons.append(f"scan_timeout={scan_timeout}s (queried live from {EXPECTED_CONTROLLER_NODE})")
+    elif args.allow_scan_timeout_fallback:
+        scan_timeout = args.scan_timeout_fallback
+        reasons.append(
+            f"FALLBACK USED for scan_timeout={scan_timeout}s - live value could not be used "
+            f"({live_fail_reason}) - --allow-scan-timeout-fallback was explicitly passed"
+        )
+    else:
+        reasons.append(f"scan_timeout could not be validated live: {live_fail_reason}")
+        reasons.append("refusing to proceed without --allow-scan-timeout-fallback "
+                        "(disabled by default - no timeout is invented)")
+        return INCONCLUSIVE, reasons, None
 
     scan_age, odom_age = node.scan_age_s(), node.odom_age_s()
-    if scan_age is None or scan_age > scan_timeout:
-        reasons.append(f"/scan stale or unavailable (age={scan_age})")
-    if odom_age is None or odom_age > scan_timeout:
-        reasons.append(f"/odom stale or unavailable (age={odom_age})")
+    if not is_fresh(scan_age, scan_timeout):
+        reasons.append(f"/scan stale, invalid, or unavailable (age={scan_age})")
+    if not is_fresh(odom_age, scan_timeout):
+        reasons.append(f"/odom stale, invalid, or unavailable (age={odom_age})")
 
     publishers = node.get_publishers_info_by_topic("/cmd_vel")
     pub_names = sorted({p.node_name for p in publishers})
@@ -287,16 +449,23 @@ def run_prerun_checks(node, args):
     return None, reasons, scan_timeout
 
 
-def sample_row(node, args):
+def sample_row(node, args, scan_timeout, prev_t_sim_s):
+    """prev_t_sim_s: the previous row's t_sim_s (or None for the first row),
+    used only to detect a simulation-time backward jump between samples."""
     now = node.get_clock().now()
     row = dict.fromkeys(CSV_FIELDS)
     row["t_sim_s"] = now.nanoseconds / 1e9
     row["t_wall_s"] = time.time()
+    row["sim_time_regression"] = prev_t_sim_s is not None and row["t_sim_s"] < prev_t_sim_s
     row["scan_age_s"] = node.scan_age_s()
     row["scan_min_range_m"] = node.scan_min_range()
+    row["scan_fresh"] = is_fresh(row["scan_age_s"], scan_timeout)
     row["odom_age_s"] = node.odom_age_s()
+    row["odom_fresh"] = is_fresh(row["odom_age_s"], scan_timeout)
     row["cmd_vel_age_s"] = node.cmd_vel_age_s()
+    row["cmd_vel_fresh"] = is_fresh(row["cmd_vel_age_s"], args.cmd_vel_fresh_timeout)
     row["gt_sampled"] = False
+    row["gt_error"] = None
 
     odom = node.odom_xy_yaw()
     if odom:
@@ -306,16 +475,22 @@ def sample_row(node, args):
         row["cmd_vel_linear_x"] = node.latest_cmd_vel.linear.x
         row["cmd_vel_angular_z"] = node.latest_cmd_vel.angular.z
 
+    # GROUND-TRUTH EVIDENCE MODE (see module docstring): --ground-truth
+    # selects ground-truth validation mode for the whole run. A failed query
+    # in that mode leaves this row's clearance unavailable - it never falls
+    # back to odometry, so the source of every reported clearance is always
+    # exactly what was actually used, never a silent substitution.
     clearance_xy, clearance_source = None, None
     if args.ground_truth:
         gt = query_ground_truth_pose(SPAWN_MODEL_NAME, args.gt_timeout)
-        if gt:
-            x, y, yaw, latency = gt
+        row["gt_sample_wall_latency_s"] = gt.get("latency")
+        if gt["ok"]:
             row["gt_sampled"] = True
-            row["gt_x"], row["gt_y"], row["gt_yaw_deg"] = x, y, math.degrees(yaw)
-            row["gt_sample_wall_latency_s"] = latency
-            clearance_xy, clearance_source = (x, y), "ground_truth"
-    if clearance_xy is None and odom:
+            row["gt_x"], row["gt_y"], row["gt_yaw_deg"] = gt["x"], gt["y"], math.degrees(gt["yaw"])
+            clearance_xy, clearance_source = (gt["x"], gt["y"]), "ground_truth"
+        else:
+            row["gt_error"] = gt["error"]
+    elif odom:
         clearance_xy, clearance_source = (row["odom_x"], row["odom_y"]), "odom (not independently verified)"
 
     if clearance_xy:
@@ -328,36 +503,34 @@ def sample_row(node, args):
     return row
 
 
-def compute_verdict(rows, scan_timeout, ground_truth_requested, interrupted):
+def compute_verdict(rows, ground_truth_requested, interrupted):
+    """Implements the VERDICT PRECEDENCE documented in the module docstring:
+    FAIL (demonstrated failure) takes priority over INCONCLUSIVE (evidence
+    quality problem), which takes priority over PASS. Freshness/regression
+    flags are read from what sample_row() already computed per-row (using
+    the single scan_timeout resolved once at prerun), not recomputed here."""
     if not rows:
         return INCONCLUSIVE, ["no rows recorded during the run window"]
 
     reasons = []
-    stale = sum(
-        1 for r in rows
-        if (r["scan_age_s"] is not None and r["scan_age_s"] > scan_timeout)
-        or (r["odom_age_s"] is not None and r["odom_age_s"] > scan_timeout)
-    )
+    if interrupted:
+        reasons.append("run was interrupted (Ctrl+C) before its configured duration elapsed")
+
     cmd_vel_ever_nonzero = any(
         abs(r["cmd_vel_linear_x"] or 0.0) > 1e-3 or abs(r["cmd_vel_angular_z"] or 0.0) > 1e-3
         for r in rows
     )
     clearances = [r["geom_clearance_m"] for r in rows if r["geom_clearance_m"] is not None]
     min_clearance = min(clearances) if clearances else None
-    tail = rows[-max(1, len(rows) // 10):]
-    final_cmd_zero = all(
-        abs(r["cmd_vel_linear_x"] or 0.0) < 1e-3 and abs(r["cmd_vel_angular_z"] or 0.0) < 1e-3
-        for r in tail
-    )
-    gt_all_sampled = all(r["gt_sampled"] for r in rows) if ground_truth_requested else False
 
-    if interrupted:
-        reasons.append("run was interrupted (Ctrl+C) before its configured duration elapsed")
-
+    # 1. FAIL - a demonstrated failure is never hidden by an unrelated outage.
+    # "Never engaged" -> FAIL is a SCENARIO-SPECIFIC rule for this baseline
+    # obstacle-ahead scenario (see the module docstring's SCENARIO-SPECIFIC
+    # CAVEAT) - do not reuse this check unmodified for a scenario where
+    # remaining stationary for the whole run could itself be correct.
     if not cmd_vel_ever_nonzero:
         reasons.append("cmd_vel never went non-zero during the run - controller did not engage")
         return FAIL, reasons
-
     if min_clearance is not None and min_clearance < 0:
         reasons.append(
             f"geometric clearance against r_robot={R_ROBOT:.4f} m went negative "
@@ -367,31 +540,76 @@ def compute_verdict(rows, scan_timeout, ground_truth_requested, interrupted):
         )
         return FAIL, reasons
 
-    verdict = PASS
+    # 2. INCONCLUSIVE - evidence-quality problems only; none of these is
+    # itself a demonstrated behavioral failure.
+    inconclusive = []
+    stale_scan = [r for r in rows if not r["scan_fresh"]]
+    stale_odom = [r for r in rows if not r["odom_fresh"]]
+    stale_cmd_vel = [r for r in rows if not r["cmd_vel_fresh"]]
+    regressed = [r for r in rows if r["sim_time_regression"]]
+    if stale_scan:
+        inconclusive.append(
+            f"/scan was stale, invalid, or unavailable on {len(stale_scan)}/{len(rows)} recorded "
+            f"rows (first at t_sim_s={stale_scan[0]['t_sim_s']:.2f}) - outage during recording "
+            f"after a healthy prerun; not concealed by earlier good samples"
+        )
+    if stale_odom:
+        inconclusive.append(
+            f"/odom was stale, invalid, or unavailable on {len(stale_odom)}/{len(rows)} recorded "
+            f"rows (first at t_sim_s={stale_odom[0]['t_sim_s']:.2f})"
+        )
+    if stale_cmd_vel:
+        inconclusive.append(
+            f"/cmd_vel was stale, invalid, or unavailable on {len(stale_cmd_vel)}/{len(rows)} "
+            f"recorded rows (first at t_sim_s={stale_cmd_vel[0]['t_sim_s']:.2f}) - the controller "
+            f"may have stopped republishing (e.g. crashed) while other sensors stayed fresh; this "
+            f"is an evidence outage, not itself a demonstrated obstacle-avoidance failure"
+        )
+    if regressed:
+        inconclusive.append(
+            f"simulation time moved backward on {len(regressed)}/{len(rows)} recorded rows "
+            f"(first at t_sim_s={regressed[0]['t_sim_s']:.2f}) - affected evidence is untrustworthy"
+        )
+
+    gt_all_sampled = all(r["gt_sampled"] for r in rows) if ground_truth_requested else False
     if not ground_truth_requested:
-        reasons.append(
+        inconclusive.append(
             "clearance is odom-derived only (--ground-truth not used); odometry is known in "
             "this project to drift under turning (see prior SLAM-mapping findings) - clearance "
-            "numbers are indicative, not proof of collision-free motion"
+            "numbers are indicative, not proof of collision-free motion, so a collision-safety "
+            "PASS claim cannot be made from this run"
         )
-        verdict = INCONCLUSIVE
     elif not gt_all_sampled:
-        reasons.append(
-            "ground truth was requested but failed to sample on at least one row (gz model "
-            "query failed/timed out) - those rows fell back to odom-derived clearance"
+        failed = [r for r in rows if not r["gt_sampled"]]
+        errors = sorted({r["gt_error"] for r in failed if r["gt_error"]})
+        inconclusive.append(
+            f"ground truth sampling failed on {len(failed)}/{len(rows)} rows "
+            f"(reasons: {errors[:3]}{', ...' if len(errors) > 3 else ''}) - incomplete "
+            f"ground-truth evidence, required for a collision-safety PASS claim"
         )
-        verdict = INCONCLUSIVE
 
-    if stale:
-        reasons.append(f"{stale}/{len(rows)} recorded samples had scan/odom age over scan_timeout")
+    delayed = sum(1 for r in rows if r["sample_delayed"])
+    if delayed:
+        reasons.append(f"{delayed}/{len(rows)} samples had a tick far slower than the target rate "
+                        f"(see tick_duration_s in the CSV) - sampling cadence was not uniform")
+
+    tail = rows[-max(1, len(rows) // 10):]
+    final_cmd_zero = all(
+        abs(r["cmd_vel_linear_x"] or 0.0) < 1e-3 and abs(r["cmd_vel_angular_z"] or 0.0) < 1e-3
+        for r in tail
+    )
     reasons.append(
         "robot commanded to stop by end of run (inspect odom/gt trajectory in the CSV to tell "
-        "apart: obstacle cleared and stopped, vs. no-safe-direction stop)"
+        "apart: obstacle cleared and stopped, vs. no-safe-direction stop - a zero command with "
+        "fresh sensor data is not automatically a failure)"
         if final_cmd_zero else
         "robot still commanding motion at end of run - duration may be too short to observe a "
         "terminal outcome"
     )
-    return verdict, reasons
+
+    if inconclusive:
+        return INCONCLUSIVE, inconclusive + reasons
+    return PASS, reasons
 
 
 def write_csv(path, rows):
@@ -424,15 +642,32 @@ def parse_args():
                          help="Sampling rate in Hz, matches the LiDAR's 10 Hz update_rate (default 10).")
     parser.add_argument("--prerun-timeout", type=float, default=5.0,
                          help="Seconds to wait for /scan, /odom, /cmd_vel before giving up (default 5).")
+    parser.add_argument("--allow-scan-timeout-fallback", action="store_true",
+                         help="Opt-in only, disabled by default: if vfh_plus_node's live scan_timeout "
+                              "parameter is unavailable, unset, wrongly typed, non-finite, zero, or "
+                              "negative, permit falling back to --scan-timeout-fallback instead of "
+                              "failing preflight. The fallback and the reason it was needed are always "
+                              "recorded in the summary - never silent.")
     parser.add_argument("--scan-timeout-fallback", type=float, default=FALLBACK_SCAN_TIMEOUT_S,
-                         help="Used only if vfh_plus_node's live scan_timeout parameter can't be queried "
-                              f"(default {FALLBACK_SCAN_TIMEOUT_S}, matching its declared default).")
+                         help="Only used when --allow-scan-timeout-fallback is also passed "
+                              f"(default {FALLBACK_SCAN_TIMEOUT_S}, matching vfh_plus_node's declared "
+                              f"default). Without --allow-scan-timeout-fallback, an invalid live "
+                              f"parameter fails preflight instead of using this value.")
     parser.add_argument("--ground-truth", action="store_true",
-                         help="Also poll Gazebo ground-truth pose via `gz model -p` each tick. Without "
-                              "this flag, clearance is odom-derived only and the verdict is capped at "
-                              "INCONCLUSIVE for collision-safety claims.")
+                         help="Selects ground-truth validation mode: polls Gazebo ground-truth pose via "
+                              "`gz model -p` each tick, and clearance comes only from that (never a "
+                              "silent odometry fallback on a failed query). GROUND TRUTH IS REQUIRED "
+                              "FOR A PASS IN THIS BASELINE VALIDATION MODE - without this flag, or with "
+                              "any row's ground-truth sampling incomplete, the run is capped at "
+                              "INCONCLUSIVE no matter how clean everything else looks. Without this "
+                              "flag, clearance is odom-derived instead (odometry-only mode).")
     parser.add_argument("--gt-timeout", type=float, default=2.0,
                          help="Timeout for each `gz model -p` subprocess call, seconds (default 2).")
+    parser.add_argument("--cmd-vel-fresh-timeout", type=float, default=CMD_VEL_FRESH_TIMEOUT_S,
+                         help="Max age, in seconds, before /cmd_vel is considered stale (default "
+                              f"{CMD_VEL_FRESH_TIMEOUT_S} - 3x vfh_plus_node's own ~0.1s watchdog/scan-"
+                              f"driven republish period; see the module docstring's CMD_VEL FRESHNESS "
+                              f"section for why this is not reused from --scan-timeout-fallback).")
     parser.add_argument("--max-rows", type=int, default=100000, help="Safety cap on recorded rows.")
     parser.add_argument("--force", action="store_true",
                          help="Allow overwriting an existing output path (default: refuse).")
@@ -470,10 +705,17 @@ def main():
             return EXIT_CODES[INCONCLUSIVE]
 
         start = time.monotonic()
+        prev_t_sim_s = None
         try:
             while time.monotonic() - start < args.duration and len(rows) < args.max_rows:
+                tick_start = time.monotonic()
                 rclpy.spin_once(node, timeout_sec=1.0 / args.rate)
-                rows.append(sample_row(node, args))
+                row = sample_row(node, args, scan_timeout, prev_t_sim_s)
+                tick_duration = time.monotonic() - tick_start
+                row["tick_duration_s"] = tick_duration
+                row["sample_delayed"] = tick_duration > 2.0 * (1.0 / args.rate)
+                rows.append(row)
+                prev_t_sim_s = row["t_sim_s"]
         except KeyboardInterrupt:
             interrupted = True
     finally:
@@ -481,7 +723,7 @@ def main():
         rclpy.shutdown()
 
     write_csv(csv_path, rows)
-    verdict, verdict_reasons = compute_verdict(rows, scan_timeout, args.ground_truth, interrupted)
+    verdict, verdict_reasons = compute_verdict(rows, args.ground_truth, interrupted)
     all_notes = prerun_notes + verdict_reasons
     write_summary(summary_path, verdict, all_notes)
     print(f"{verdict}")
