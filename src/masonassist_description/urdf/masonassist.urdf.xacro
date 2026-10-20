@@ -1,0 +1,257 @@
+<?xml version="1.0"?>
+
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro"
+       name="masonassist">
+
+  <!-- ====================================================== -->
+  <!-- ROBOT PARAMETERS                                       -->
+  <!-- ====================================================== -->
+
+  <!-- Track geometry -->
+  <xacro:property name="track_separation" value="0.6555"/>
+  <xacro:property name="track_width" value="0.085"/>
+  <xacro:property name="drive_radius" value="0.070"/>
+
+  <!-- Approximate total operating mass -->
+  <xacro:property name="robot_mass" value="80.0"/>
+
+
+  <!-- ====================================================== -->
+  <!-- BASE FOOTPRINT (Ground Contact Plane)                  -->
+  <!-- ====================================================== -->
+
+  <link name="base_footprint"/>
+
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0.07683" rpy="0 0 0"/>
+  </joint>
+
+
+  <!-- ====================================================== -->
+  <!-- BASE / CHASSIS                                         -->
+  <!-- ====================================================== -->
+
+  <link name="base_link">
+
+    <visual>
+      <!--
+        CAD STL axes:
+          X = length
+          Y = height
+          Z = width
+
+        ROS axes:
+          X = forward
+          Y = left
+          Z = up
+
+        +90 degrees about X converts CAD -> ROS orientation.
+        STL is in millimetres, hence scale 0.001.
+      -->
+      <origin
+        xyz="0 0 0.1525"
+        rpy="1.5708 0 0"/>
+
+      <geometry>
+        <mesh
+          filename="package://masonassist_description/meshes/chassis.stl"
+          scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+
+    <collision>
+      <origin
+        xyz="0 0 0.1525"
+        rpy="1.5708 0 0"/>
+
+      <geometry>
+        <mesh
+          filename="package://masonassist_description/meshes/chassis.stl"
+          scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+
+      <mass value="${robot_mass}"/>
+
+      <inertia
+        ixx="5.0"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="5.0"
+        iyz="0.0"
+        izz="5.0"/>
+    </inertial>
+
+  </link>
+
+
+  <!-- ====================================================== -->
+  <!-- LEFT TRACK                                             -->
+  <!-- ====================================================== -->
+
+  <link name="left_track">
+
+    <visual>
+      <!--
+        Track STL is in millimetres.
+        Rotate CAD axes into ROS axes.
+        X offset centers the 574.96 mm track around base_link.
+        Z offset places the bottom of the track at ground level.
+      -->
+      <origin
+        xyz="-0.24605 -0.06752 0.05185"
+        rpy="-1.1687 0 0"/>
+
+      <geometry>
+        <mesh
+          filename="package://masonassist_description/meshes/left_track.stl"
+          scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+
+    <collision>
+      <origin
+        xyz="-0.24605 -0.06752 0.05185"
+        rpy="-1.1687 0 0"/>
+
+      <geometry>
+        <mesh
+          filename="package://masonassist_description/meshes/left_track.stl"
+          scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+
+      <mass value="10.0"/>
+
+      <inertia
+        ixx="0.5"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="0.5"
+        iyz="0.0"
+        izz="0.5"/>
+    </inertial>
+
+  </link>
+
+
+  <!-- ====================================================== -->
+  <!-- RIGHT TRACK                                            -->
+  <!-- ====================================================== -->
+
+  <link name="right_track">
+
+    <visual>
+      <origin
+        xyz="-0.24605 -0.06752 0.05185"
+        rpy="-1.1687 0 0"/>
+
+      <geometry>
+        <mesh
+          filename="package://masonassist_description/meshes/right_track.stl"
+          scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+
+    <collision>
+      <origin
+        xyz="-0.24605 -0.06752 0.05185"
+        rpy="-1.1687 0 0"/>
+
+      <geometry>
+        <mesh
+          filename="package://masonassist_description/meshes/right_track.stl"
+          scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+
+      <mass value="10.0"/>
+
+      <inertia
+        ixx="0.5"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="0.5"
+        iyz="0.0"
+        izz="0.5"/>
+    </inertial>
+
+  </link>
+
+
+  <!-- ====================================================== -->
+  <!-- LEFT TRACK JOINT                                       -->
+  <!-- ====================================================== -->
+
+  <joint
+    name="left_track_joint"
+    type="continuous">
+
+    <parent link="base_link"/>
+    <child link="left_track"/>
+
+    <!--
+      ROS:
+        X = forward
+        Y = left
+        Z = up
+
+      Left track is +Y.
+    -->
+    <origin
+      xyz="0 ${track_separation/2} 0"
+      rpy="0 0 0"/>
+
+    <axis xyz="1 0 0"/>
+
+  </joint>
+
+
+  <!-- ====================================================== -->
+  <!-- RIGHT TRACK JOINT                                      -->
+  <!-- ====================================================== -->
+
+  <joint
+    name="right_track_joint"
+    type="continuous">
+
+    <parent link="base_link"/>
+    <child link="right_track"/>
+
+    <!-- Right track is -Y -->
+    <origin
+      xyz="0 ${-track_separation/2} 0"
+      rpy="0 0 0"/>
+
+    <axis xyz="1 0 0"/>
+
+  </joint>
+
+
+  <!-- ====================================================== -->
+  <!-- LIDAR SENSOR FRAME                                     -->
+  <!-- Static mount, matches the sensor pose in                -->
+  <!-- models/masonassist/model.sdf exactly (upper/front-center -->
+  <!-- of the chassis). No geometry - a TF anchor only.         -->
+  <!-- ====================================================== -->
+
+  <link name="laser_frame"/>
+
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser_frame"/>
+    <origin xyz="0.30 0 0.19" rpy="0 0 0"/>
+  </joint>
+
+</robot>

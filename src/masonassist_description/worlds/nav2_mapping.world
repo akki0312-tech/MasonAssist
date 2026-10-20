@@ -1,0 +1,160 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <!-- Dedicated MasonAssist environment for the FIRST SLAM Toolbox + Nav2
+       milestone. Separate from worlds/vfh_plus_validation.world, which was
+       deliberately built as twelve widely-isolated VFH+ regression
+       clusters (20 m apart, so no cluster's geometry ever appears in
+       another's LiDAR scan) - exactly the property that makes it a poor
+       SLAM environment: long, feature-less, open-ground gaps between
+       clusters give scan-matching nothing to lock onto for 15-17 m at a
+       stretch. This world is the opposite by design: one small, fully
+       enclosed room with continuous perimeter walls, so the robot has
+       nearby, scan-matchable structure at every pose along a single
+       driveable loop.
+
+       World <name> is deliberately kept identical to the baseline world
+       ("masonassist_world"), same reason as vfh_plus_validation.world:
+       ros_gz_bridge's clock_bridge/masonassist_bridge/lidar_bridge topics
+       in gazebo.launch.py are hardcoded to /world/masonassist_world/...,
+       not to the .world filename - reusing the name means zero changes
+       are needed to any bridge node to use this world.
+
+       The robot is NOT spawned here - gazebo.launch.py's own
+       spawn_robot_node handles that from the existing, locked
+       models/masonassist/model.sdf, exactly as for every other world in
+       this project.
+
+       ROOM LAYOUT (approx. 10 m x 8 m interior, centered on the origin):
+       - Perimeter: four wall segments (0.2 m thick, 1.0 m tall - well
+         above both the LiDAR mount height of 0.267 m and the chassis)
+         forming a continuous rectangle at x=+-5, y=+-4 (wall centerlines).
+       - Three interior obstacles, placed asymmetrically, each with at
+         least ~1.5 m clearance from every wall and from each other -
+         comfortably more than r_effective (0.5975 m, from the VFH+
+         design work) so a full loop around the interior is always
+         driveable without threading any narrow gap.
+       - Default spawn (0, 0, 0.1, yaw=0), matching gazebo.launch.py's own
+         x/y/z/yaw defaults, lands in the open room center, clear of every
+         obstacle and wall. -->
+  <world name="masonassist_world">
+    <physics type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin name="gz::sim::systems::Physics" filename="gz-sim-physics-system"/>
+    <plugin name="gz::sim::systems::UserCommands" filename="gz-sim-user-commands-system"/>
+    <plugin name="gz::sim::systems::SceneBroadcaster" filename="gz-sim-scene-broadcaster-system"/>
+    <plugin name="gz::sim::systems::Contact" filename="gz-sim-contact-system"/>
+    <plugin name="gz::sim::systems::Sensors" filename="gz-sim-sensors-system">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <gravity>0 0 -9.8</gravity>
+
+    <!-- Ground plane: sized for this small room plus a modest margin,
+         not the 300x30 m plane used in vfh_plus_validation.world - this
+         world is deliberately right-sized for a quick first mapping
+         pass, not a long multi-cluster traverse. -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>14 12</size></plane></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>14 12</size></plane></geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================
+         Perimeter walls (continuous rectangle, 10 m x 8 m centerlines)
+         ============================================================ -->
+    <model name="room_wall_north">
+      <static>true</static>
+      <pose>0 4 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>10.2 0.2 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>10.2 0.2 1.0</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>0.6 0.6 0.6 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="room_wall_south">
+      <static>true</static>
+      <pose>0 -4 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>10.2 0.2 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>10.2 0.2 1.0</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>0.6 0.6 0.6 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="room_wall_east">
+      <static>true</static>
+      <pose>5 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.2 8.2 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.2 8.2 1.0</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>0.6 0.6 0.6 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="room_wall_west">
+      <static>true</static>
+      <pose>-5 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.2 8.2 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.2 8.2 1.0</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>0.6 0.6 0.6 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ============================================================
+         Interior obstacles (asymmetric, each >= ~1.5 m clear of every
+         wall and every other obstacle)
+         ============================================================ -->
+    <!-- Rectangular block, upper-left quadrant -->
+    <model name="room_obstacle_1">
+      <static>true</static>
+      <pose>-2 1.5 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.5 2.0 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1.5 2.0 1.0</size></box></geometry>
+          <material><ambient>0.8 0.3 0.1 1</ambient><diffuse>0.8 0.3 0.1 1</diffuse></material></visual>
+      </link>
+    </model>
+    <!-- Small block, right-middle -->
+    <model name="room_obstacle_2">
+      <static>true</static>
+      <pose>3 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.0 1.5 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1.0 1.5 1.0</size></box></geometry>
+          <material><ambient>0.1 0.4 0.8 1</ambient><diffuse>0.1 0.4 0.8 1</diffuse></material></visual>
+      </link>
+    </model>
+    <!-- Small square block, lower-left -->
+    <model name="room_obstacle_3">
+      <static>true</static>
+      <pose>-3 -2 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.0 1.0 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1.0 1.0 1.0</size></box></geometry>
+          <material><ambient>0.2 0.7 0.2 1</ambient><diffuse>0.2 0.7 0.2 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+  </world>
+</sdf>

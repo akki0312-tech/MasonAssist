@@ -1,0 +1,17 @@
+# colcon build artifacts - regenerable from source
+build/
+install/
+log/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# pytest cache
+.pytest_cache/
+
+# editor-local settings (hardcodes an absolute local path)
+.vscode/
+
+# validation run outputs - not source, grows per run
+src/masonassist_description/scripts/validation/results/

@@ -1,0 +1,295 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <!-- VFH+ behavioral validation world. Kept as a SEPARATE file from
+       worlds/masonassist.world (which is untouched) so the baseline world
+       remains fully recoverable - this file is only loaded when the
+       gazebo.launch.py 'world_file' argument is explicitly set to it.
+
+       World <name> is deliberately kept identical to the baseline world
+       ("masonassist_world") because ros_gz_bridge's clock_bridge and any
+       other /world/<name>/... topics in gazebo.launch.py are hardcoded to
+       that name, not to the .world filename - reusing it means zero
+       changes are needed to the bridge nodes to use this world.
+
+       LAYOUT: twelve obstacle clusters (scenarios A-L), each centered at
+       x = i * 20.0, y = 0.0 for i = 0..11, spaced 20 m apart. LiDAR
+       range_max = 10.0 m and VFH+ d_max = 4.0 m, so 20 m spacing leaves a
+       large, deliberate margin - no cluster's geometry can ever appear in
+       another cluster's scan. The robot is teleported (via `gz service
+       .../set_pose`) between cluster start poses rather than relaunching
+       Gazebo per scenario; physics/world content is otherwise identical
+       to the baseline (same plugins, same ground plane, same gravity).
+
+       Per-cluster robot start pose convention: (cluster_x - 4.0, 0.0),
+       yaw = 0 (facing +X, toward increasing cluster_x) - see the test
+       procedure notes in the report for exact per-scenario obstacle
+       placement relative to each cluster's own x. -->
+  <world name="masonassist_world">
+    <physics type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin name="gz::sim::systems::Physics" filename="gz-sim-physics-system"/>
+    <plugin name="gz::sim::systems::UserCommands" filename="gz-sim-user-commands-system"/>
+    <plugin name="gz::sim::systems::SceneBroadcaster" filename="gz-sim-scene-broadcaster-system"/>
+    <plugin name="gz::sim::systems::Contact" filename="gz-sim-contact-system"/>
+    <plugin name="gz::sim::systems::Sensors" filename="gz-sim-sensors-system">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <gravity>0 0 -9.8</gravity>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>300 30</size></plane></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>300 30</size></plane></geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================
+         Reusable obstacle box template (documented once here, applied
+         literally below - color varies only so each cluster is visually
+         distinguishable when inspecting the world, no functional effect):
+         <static>true</static> box, collision == visual geometry.
+         ============================================================ -->
+
+    <!-- ---------- Cluster 0 (x=0):  SCENARIO A - empty/open ---------- -->
+    <!-- Deliberately no obstacles. -->
+
+    <!-- ---------- Cluster 1 (x=20): SCENARIO B - single obstacle ahead ---------- -->
+    <model name="b_obstacle_ahead">
+      <static>true</static>
+      <pose>20.0 0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>1 0 0 1</ambient><diffuse>1 0 0 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ---------- Cluster 2 (x=40): SCENARIO C - obstacle offset left (+Y) ---------- -->
+    <model name="c_obstacle_left">
+      <static>true</static>
+      <pose>40.0 1.0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ---------- Cluster 3 (x=60): SCENARIO D - obstacle offset right (-Y) ---------- -->
+    <model name="d_obstacle_right">
+      <static>true</static>
+      <pose>60.0 -1.0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ---------- Cluster 4 (x=80): SCENARIO E - traversable corridor (gap=3.0m) ---------- -->
+    <model name="e_corridor_left">
+      <static>true</static>
+      <pose>80.0 1.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>0 0.6 1 1</ambient><diffuse>0 0.6 1 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="e_corridor_right">
+      <static>true</static>
+      <pose>80.0 -1.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>0 0.6 1 1</ambient><diffuse>0 0.6 1 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ---------- Cluster 5 (x=100): SCENARIO F - narrow passage (gap=0.8m < 2*r_effective=1.195m) ---------- -->
+    <model name="f_narrow_left">
+      <static>true</static>
+      <pose>100.0 0.4 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>0.8 0 0.8 1</ambient><diffuse>0.8 0 0.8 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="f_narrow_right">
+      <static>true</static>
+      <pose>100.0 -0.4 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>0.8 0 0.8 1</ambient><diffuse>0.8 0 0.8 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ---------- Cluster 6 (x=120): SCENARIO G - staggered obstacles (slalom) ---------- -->
+    <model name="g_stagger_1">
+      <static>true</static>
+      <pose>118.0 0.8 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>0.4 0.8 0 1</ambient><diffuse>0.4 0.8 0 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="g_stagger_2">
+      <static>true</static>
+      <pose>120.0 -0.8 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>0.4 0.8 0 1</ambient><diffuse>0.4 0.8 0 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="g_stagger_3">
+      <static>true</static>
+      <pose>122.0 0.8 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>0.4 0.8 0 1</ambient><diffuse>0.4 0.8 0 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ---------- Cluster 7 (x=140): SCENARIO H - symmetric wide obstacles (gap=4.0m) ---------- -->
+    <model name="h_sym_left">
+      <static>true</static>
+      <pose>140.0 2.0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>0.6 0.6 0 1</ambient><diffuse>0.6 0.6 0 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="h_sym_right">
+      <static>true</static>
+      <pose>140.0 -2.0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>0.6 0.6 0 1</ambient><diffuse>0.6 0.6 0 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ---------- Cluster 8 (x=160): SCENARIO I - U-shaped dead end ----------
+         Back wall at x=162 (2m past cluster origin), side walls at y=+-1.5
+         spanning x in [159, 162]. Interior 3.0m wide, 3.0m deep. -->
+    <model name="i_dead_end_back">
+      <static>true</static>
+      <pose>162.0 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.2 3.0 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.2 3.0 1.0</size></box></geometry>
+          <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="i_dead_end_side_left">
+      <static>true</static>
+      <pose>160.5 1.5 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>3.0 0.2 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>3.0 0.2 1.0</size></box></geometry>
+          <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="i_dead_end_side_right">
+      <static>true</static>
+      <pose>160.5 -1.5 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>3.0 0.2 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>3.0 0.2 1.0</size></box></geometry>
+          <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ---------- Cluster 9 (x=180): SCENARIO J - continuous wall, one side ----------
+         Single 10m-long wall at y=+1.2, parallel to the robot's travel
+         direction (never directly ahead). -->
+    <model name="j_side_wall">
+      <static>true</static>
+      <pose>180.0 1.2 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>10.0 0.2 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>10.0 0.2 1.0</size></box></geometry>
+          <material><ambient>0 0.4 0.4 1</ambient><diffuse>0 0.4 0.4 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ---------- Cluster 10 (x=200): SCENARIO K - two parallel walls (corridor) ----------
+         Interior width 1.8m (0.9m clearance each side from centerline,
+         vs r_effective=0.5975m -> 0.3m nominal margin). -->
+    <model name="k_wall_left">
+      <static>true</static>
+      <pose>200.0 0.9 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>10.0 0.2 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>10.0 0.2 1.0</size></box></geometry>
+          <material><ambient>0.5 0 0.5 1</ambient><diffuse>0.5 0 0.5 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="k_wall_right">
+      <static>true</static>
+      <pose>200.0 -0.9 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>10.0 0.2 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>10.0 0.2 1.0</size></box></geometry>
+          <material><ambient>0.5 0 0.5 1</ambient><diffuse>0.5 0 0.5 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ---------- Cluster 11 (x=220): SCENARIO L - dense wall w/ narrow-but-safe gap ----------
+         Wall spans y in [-3,3] at x=222 (2m past cluster origin), split
+         into two segments leaving a 1.5m gap centered on y=0 (centerline):
+         left segment y in [0.75, 3.0], right segment y in [-3.0, -0.75].
+         Gap half-width 0.75m > r_effective 0.5975m (margin ~0.15m each
+         side) - intended to be geometrically safe per is_direction_safe,
+         while the wall itself is dense/continuous enough to produce many
+         overlapping enlarged angular spans in the sectors bordering the
+         gap, to test whether smoothing bleeds occupancy into sector 0. -->
+    <model name="l_dense_wall_left">
+      <static>true</static>
+      <pose>222.0 1.875 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.2 2.25 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.2 2.25 1.0</size></box></geometry>
+          <material><ambient>0.9 0.2 0.2 1</ambient><diffuse>0.9 0.2 0.2 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="l_dense_wall_right">
+      <static>true</static>
+      <pose>222.0 -1.875 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.2 2.25 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.2 2.25 1.0</size></box></geometry>
+          <material><ambient>0.9 0.2 0.2 1</ambient><diffuse>0.9 0.2 0.2 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+  </world>
+</sdf>
