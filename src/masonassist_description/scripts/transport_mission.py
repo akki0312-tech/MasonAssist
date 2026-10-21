@@ -32,6 +32,12 @@ PROGRESS_EPS_M = 0.3
 NO_PROGRESS_S = 45.0
 MAX_REPLANS = 2
 HOLD_STATUSES = ('paused', 'estopped', 'yielding')   # robot deliberately not moving
+
+# Live-map rerouting: if the remaining route crosses an obstacle learned from
+# LiDAR (live_map.py via SitePlanner.set_dynamic), replan around it at once
+# instead of waiting for the no-progress timer. Separate budget from replans.
+ROUTE_CHECK_S = 1.0
+REROUTE_MIN_GAP_S = 5.0
 MIN_STATION_CLEARANCE_M = 0.6  # ~ VFH+ r_effective (0.5975 m)
 
 STATIONS = {
@@ -108,6 +114,9 @@ class TransportMission:
         self.planner = planner
         self.route = []
         self.replans = 0
+        self.reroutes = 0
+        self._last_route_check = now
+        self._last_reroute = -float('inf')
         self.best_remaining = None
         self.last_progress_t = now
         self._last_update_t = now
@@ -134,6 +143,30 @@ class TransportMission:
     def _reset_progress(self, now):
         self.best_remaining = None
         self.last_progress_t = now
+
+    def _check_route(self, now, odom_xy, nav_status, station):
+        """Reroute around learned obstacles. Returns the new first waypoint,
+        or None. Keeps the current route if no alternative exists (the
+        no-progress check then fails the leg as usual)."""
+        if self.planner is None or not hasattr(self.planner, 'route_blocked'):
+            return None
+        if now - self._last_route_check < ROUTE_CHECK_S or nav_status in HOLD_STATUSES:
+            return None
+        self._last_route_check = now
+        if now - self._last_reroute < REROUTE_MIN_GAP_S:
+            return None
+        if not self.planner.route_blocked(odom_xy, self.route):
+            return None
+        new_route = self.planner.plan(odom_xy, self._xy(station))
+        if new_route is None:
+            return None
+        self.route = new_route
+        self.reroutes += 1
+        self._last_reroute = now
+        # re-baseline the progress measure for the new route, but do NOT
+        # reset the no-progress timer: endless reroutes must not hide a stuck robot
+        self.best_remaining = self._remaining(odom_xy)
+        return self.current_goal()
 
     def _check_progress(self, now, odom_xy, nav_status):
         """Returns a replanned goal, or None. May fail the mission."""
@@ -204,6 +237,9 @@ class TransportMission:
         replanned = self._check_progress(now, odom_xy, nav_status)
         if replanned is not None or not self.active:
             return replanned
+        rerouted = self._check_route(now, odom_xy, nav_status, station)
+        if rerouted is not None:
+            return rerouted
 
         # intermediate waypoints: pure distance check, no 'reached' needed
         advanced = False
@@ -259,6 +295,7 @@ class TransportMission:
             'abort_reason': self.abort_reason,
             'route': [{'x': x, 'y': y} for x, y in self.route],
             'replans': self.replans,
+            'reroutes': self.reroutes,
             'no_progress_s': round(max(0.0, now - self.last_progress_t), 1) if self.active else None,
         }
 

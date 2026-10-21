@@ -13,6 +13,7 @@ This is a **simulation project**. Nothing here has run on physical hardware.
 - **Transport missions** — multi-leg jobs such as *brick pickup → building door → dock*, with load/unload stops and payload tracking.
 - **Job queue + history** — queue several deliveries; the robot runs them back to back. A failed or cancelled job pauses the queue until the operator resumes it.
 - **Route planning** — A\* on the known site layout plans corner-safe waypoints for every leg and every map click.
+- **Live obstacle map** — obstacles the LiDAR sees that are not in the site layout (debris, a new pallet) and that stay put for 4 s are learned into an occupancy grid; the robot reroutes around them immediately, and they clear again once the LiDAR sees through the empty space.
 - **Local obstacle avoidance** — a VFH+ (Vector Field Histogram Plus) controller drives between waypoints using live 360° LiDAR.
 - **Human-aware safety** — LiDAR returns that are *not* part of the known site layout are treated as possible people or debris: the robot slows to 40 % within 2 m and stops within 1 m in its path, then resumes 1 s after the path clears.
 - **Recovery and failure handling** — escape and rotate-in-place recovery; if a leg makes no progress for 45 s it is re-planned, and after 2 re-plans the mission fails cleanly with a reason.
@@ -35,7 +36,7 @@ flowchart LR
   SFF["scan_frame_fix"]
   TF["odom_to_tf_broadcaster<br/>robot_state_publisher"]
   VFH["vfh_plus_node<br/>VFH+ core + safety gate"]
-  MS["mission_server<br/>missions, A* planner,<br/>job queue, HTTP API"]
+  MS["mission_server<br/>missions, A* planner, live map,<br/>job queue, HTTP API"]
   WM["worker_mover"]
   UI["Browser dashboard<br/>localhost:8080"]
 
@@ -53,7 +54,7 @@ flowchart LR
   BRIDGE --> WORKERS
 ```
 
-**How a delivery works:** the operator queues a job in the dashboard → `mission_server` takes the next job, plans a route with A\* over the known layout (keeping 0.7 m from every known obstacle) and publishes one waypoint at a time on `/goal_pose` → `vfh_plus_node` steers toward the current waypoint with VFH+ on live LiDAR, while its safety gate limits speed near unmapped obstacles → `mission_server` advances the waypoint when the robot reaches it and marks a station reached only when odometry confirms the robot is there → load/unload, next leg, and finally back to the dock.
+**How a delivery works:** the operator queues a job in the dashboard → `mission_server` takes the next job, plans a route with A\* over the known layout plus any learned obstacles (keeping 0.7 m from both) and publishes one waypoint at a time on `/goal_pose` → `vfh_plus_node` steers toward the current waypoint with VFH+ on live LiDAR, while its safety gate limits speed near unmapped obstacles → every second `mission_server` checks whether the remaining route now crosses a learned obstacle and, if so, reroutes → it advances the waypoint when the robot reaches it and marks a station reached only when odometry confirms the robot is there → load/unload, next leg, and finally back to the dock.
 
 ---
 
@@ -123,6 +124,7 @@ python3 src/masonassist_description/scripts/mission_server.py
 | Orange dots | LiDAR returns not explained by the layout — possible person or debris |
 | Cyan line | Trajectory from odometry |
 | Dashed purple line | Planned A\* route for the current leg |
+| Dark-orange squares | Learned obstacles (live map) |
 | Coloured squares | Stations: storage (orange), delivery (green), dock (grey) |
 | Cyan triangle | The robot and its heading |
 
@@ -156,7 +158,7 @@ All endpoints are on `http://localhost:8080`.
 | POST | `/api/queue` | `{"action":"add","mission":"bricks_to_building"}` | also `remove` (`id`), `clear`, `pause`, `resume`; 400 on bad input |
 | POST | `/api/mission` | `{"mission":"blocks_to_scaffold"}` | start immediately; 409 if a mission is active |
 | POST | `/api/goal` | `{"x":-3.0,"y":-3.0}` | planned trip to a point; 400 if outside the site or inside an obstacle |
-| POST | `/api/cmd` | `{"cmd":"estop"}` | `pause`, `resume`, `cancel`, `estop`, `clear_estop` |
+| POST | `/api/cmd` | `{"cmd":"estop"}` | `pause`, `resume`, `cancel`, `estop`, `clear_estop`, `clear_map` (forget learned obstacles) |
 
 Example:
 ```bash
@@ -194,6 +196,8 @@ Measured in simulation in this repository's VM. These are small samples — they
 
 **Safety** — a person-sized obstacle placed 0.75 m in front of the moving robot: it stopped within one 0.5 s sample, held still while the obstacle stayed, and resumed automatically after it was removed. In normal missions, passing workers caused slow-downs only, with no false stops from known structures.
 
+**Live obstacle map** — an unmapped 1.2 × 1.0 m pallet placed on the planned route to the brick pickup: the robot learned it (63 cells, all on the pallet, none elsewhere), rerouted around it 5 times across two legs with no stuck re-plans, and completed the mission in 170.2 s. After the pallet was removed, the learned cells cleared by themselves within ~6 s of the robot seeing through the space, and a full mission then completed in 148.4 s with 0 reroutes and 0 learned cells — passing workers were not learned.
+
 **Failure handling** — a goal sealed off by two temporary walls: re-planned at 46 s and 91 s, then the mission failed at 136 s with *"no progress toward goal after 2 replans"* and the robot stopped.
 
 **Fixes found by measuring** — the TrackedVehicle plugin's own odometry drifted ~1.7 m / 35° after a minute of skid-steer turning (now replaced by `OdometryPublisher`); simulation speed went from 0.57× to 0.81× real time with the GUI and 0.99× headless after removing per-tick CLI process launches.
@@ -204,7 +208,7 @@ Measured in simulation in this repository's VM. These are small samples — they
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 python3 -m pytest src/masonassist_description/test/
 ```
-145 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the A\* planner, the mission sequencer, the job queue and controller selection.
+152 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
 
 ---
 
@@ -212,7 +216,7 @@ python3 -m pytest src/masonassist_description/test/
 
 - **Simulation only** — no hardware testing.
 - **Odometry is near-perfect** — it comes from Gazebo's `OdometryPublisher`, which follows the simulated motion. A real robot would need proper localization.
-- **Planning uses an authored map** — the A\* planner knows the site layout as it was built into the world; there is no SLAM and no Nav2.
+- **Planning starts from an authored map** — the A\* planner knows the site layout as it was built into the world and adds obstacles it has seen with the LiDAR. There is no SLAM and no Nav2: the live map relies on the simulator's near-perfect odometry, and only learns objects that stay put for 4 s.
 - **"Unmapped" is not person recognition** — anything not in the layout (a person, debris, a new pallet) triggers the safety zones the same way.
 - **LiDAR self-occlusion mask** — two 9° bands where the robot's own tracks block the LiDAR are ignored. A very narrow obstacle that sits *only* inside those bands could go unseen; in that case the controller reports no data and stops rather than driving on.
 - **Workers are teleported**, not physics-driven, so they can't be pushed by the robot.
@@ -233,7 +237,8 @@ src/masonassist_description/
     vfh_plus_core.py                    VFH+ algorithm (ROS-free)
     vfh_plus_node.py                    ROS controller: VFH+, recovery, escape, safety gate
     safety_zones.py                     human-aware slow/stop logic (ROS-free)
-    site_planner.py                     A* route planner on the known layout (ROS-free)
+    site_planner.py                     A* route planner on the known layout + learned obstacles (ROS-free)
+    live_map.py                         live obstacle map from LiDAR (ROS-free)
     transport_mission.py                stations, missions, mission sequencer (ROS-free)
     job_queue.py                        job queue and history (ROS-free)
     mission_server.py                   ROS node + HTTP API + dashboard server

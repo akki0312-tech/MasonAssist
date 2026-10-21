@@ -138,6 +138,7 @@
                 onclick="queueAction({action: latestState.queue && latestState.queue.paused ? 'resume' : 'pause'})">Pause queue</button>
         <button class="btn-queue" onclick="queueAction({action: 'clear'})">Clear queue</button>
       </div>
+      <button class="btn-queue" onclick="sendCmd('clear_map')">Clear learned obstacles</button>
       <div class="hint">Jobs run back to back. A failed or cancelled job pauses the queue until you resume it. Queue and history reset when the mission server restarts.</div>
       <div class="kv"><span class="k">Mission / phase</span><span class="v" id="missionPhase">none</span></div>
       <div class="kv"><span class="k">Payload</span><span class="v" id="missionPayload">-</span></div>
@@ -293,6 +294,7 @@ function renderMission() {
   let phase = `${m.name} / ${m.phase}`;
   if (m.abort_reason) phase += ` (${m.abort_reason})`;
   if (m.replans) phase += ` - replans: ${m.replans}`;
+  if (m.reroutes) phase += ` - rerouted around learned obstacles: ${m.reroutes}`;
   const phaseEl = document.getElementById('missionPhase');
   phaseEl.textContent = phase;
   phaseEl.style.color = m.phase === 'failed' ? '#ff6b6b' : '';
@@ -325,7 +327,8 @@ function drawLegend() {
     ['#ff5c4d', 'LiDAR returns (live sensor data)'],
     ['#ffa31a', 'Unmapped LiDAR returns (possible person / debris)'],
     ['#4fd1ff', 'Trajectory (derived from odometry)'],
-    ['#c792ea', 'Planned route (A* on known layout)'],
+    ['#c792ea', 'Planned route (A* on known layout + learned obstacles)'],
+    ['#d9822b', 'Learned obstacles (live map from LiDAR)'],
     ['#ffcc00', 'Selected goal'],
     ['#7fe0ff', 'Robot (odometry pose)'],
   ];
@@ -366,6 +369,16 @@ function draw() {
     const w = o.hx * 2 * PX_PER_M, h = o.hy * 2 * PX_PER_M;
     ctx.fillRect(x0, y0, w, h);
     ctx.strokeRect(x0, y0, w, h);
+  }
+
+  // learned obstacles (live map: seen by LiDAR, not in the known layout, persistent)
+  if (latestState.live_map && latestState.live_map.cells) {
+    ctx.fillStyle = 'rgba(217,130,43,0.85)';
+    const s = Math.max(2, 0.1 * PX_PER_M);
+    for (const [cx, cy] of latestState.live_map.cells) {
+      const [px, py] = worldToPx(cx, cy);
+      ctx.fillRect(px - s / 2, py - s / 2, s, s);
+    }
   }
 
   // transport stations (named pickup/delivery/dock points)

@@ -33,6 +33,7 @@ from worker_mover import OBSTACLES  # noqa: E402
 from transport_mission import MISSIONS, STATIONS, TransportMission, validate_goal  # noqa: E402
 from site_planner import SitePlanner  # noqa: E402
 from job_queue import JobQueue  # noqa: E402
+from live_map import LiveMap  # noqa: E402
 
 HTTP_PORT = 8080
 DASHBOARD_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dashboard.html')
@@ -74,6 +75,9 @@ class MissionServerNode(Node):
         self.job_mission = None  # the TransportMission running queue.current, if any
         self.planner = SitePlanner()
         self.create_timer(0.2, self._mission_tick)
+        self.live_map = LiveMap()
+        self.last_scan_raw = None
+        self.create_timer(0.5, self._map_tick)
 
         self.get_logger().info(f'mission_server started, dashboard at http://0.0.0.0:{HTTP_PORT}/')
 
@@ -87,6 +91,8 @@ class MissionServerNode(Node):
     def _scan_cb(self, msg: LaserScan) -> None:
         finite = [r for r in msg.ranges if math.isfinite(r)]
         with self.lock:
+            # raw floats (keeps +inf vs -inf) for the live map
+            self.last_scan_raw = (list(msg.ranges), msg.angle_min, msg.angle_increment)
             self.state['scan'] = {
                 'n': len(msg.ranges),
                 'finite': len(finite),
@@ -142,6 +148,24 @@ class MissionServerNode(Node):
             self.cmd_pub.publish(String(data='cancel'))
             with self.lock:
                 self.state['goal'] = None
+
+    def _map_tick(self) -> None:
+        """2 Hz: fold the latest scan into the live obstacle map and hand the
+        persistent learned obstacles to the planner."""
+        with self.lock:
+            odom, scan = self.state['odom'], self.last_scan_raw
+        if odom is None or scan is None:
+            return
+        now = self._now()
+        ranges, angle_min, inc = scan
+        with self.lock:   # HTTP threads read the map too
+            self.live_map.update((odom['x'], odom['y'], odom['yaw']), ranges, angle_min, inc, now)
+            self.planner.set_dynamic(self.live_map.persistent(now))
+
+    def clear_map(self) -> None:
+        with self.lock:
+            self.live_map.clear()
+            self.planner.set_dynamic(None)
 
     def _record_finished_job(self, now) -> None:
         """Call with self.lock held. Moves the running job to history once
@@ -209,6 +233,8 @@ class MissionServerNode(Node):
             snapshot = dict(self.state)
             snapshot['mission'] = self.mission.to_dict(now) if self.mission else None
             snapshot['queue'] = self.queue.to_dict(now)
+            cells = self.live_map.cells(now)
+            snapshot['live_map'] = {'cells': cells, 'count': len(cells)}
         return json.dumps(snapshot).encode('utf-8')
 
     def publish_goal(self, x: float, y: float) -> None:
@@ -356,6 +382,10 @@ def make_handler(node: MissionServerNode):
                     self._send_json({'error': message}, code)
             elif self.path == '/api/cmd':
                 cmd = data.get('cmd')
+                if cmd == 'clear_map':
+                    node.clear_map()
+                    self._send_json({'ok': True})
+                    return
                 if cmd not in ('cancel', 'pause', 'resume', 'estop', 'clear_estop'):
                     self._send_json({'error': 'bad cmd'}, 400)
                     return

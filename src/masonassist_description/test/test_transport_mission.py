@@ -187,3 +187,25 @@ def test_fails_cleanly_after_max_replans():
     assert 'no progress toward brick_pickup' in m.abort_reason
     assert m.update(t + 100, stuck, 'navigating') is None
     assert m.to_dict(t)['replans'] == MAX_REPLANS
+
+
+def test_learned_obstacle_on_route_triggers_reroute_with_min_gap():
+    import numpy as np
+    from site_planner import SitePlanner
+    from transport_mission import REROUTE_MIN_GAP_S, ROUTE_CHECK_S
+    p = SitePlanner()
+    m = TransportMission('bricks_to_building', 0.0, (0.0, 0.0), p)
+    xs = p.lo + np.arange(p.n) * p.res
+    gx, gy = np.meshgrid(xs, xs, indexing='ij')
+    p.set_dynamic(np.hypot(gx + 3.9, gy + 2.4) <= 0.5)
+    try:
+        goal = m.update(ROUTE_CHECK_S + 0.1, (0.0, 0.0), 'navigating')
+        assert m.reroutes == 1 and m.replans == 0 and goal == m.route[0]
+        assert not p.route_blocked((0.0, 0.0), m.route)
+        p.set_dynamic(np.hypot(gx - m.route[-2][0], gy - m.route[-2][1]) <= 0.5
+                      if len(m.route) > 1 else None)
+        m.update(2 * ROUTE_CHECK_S + 0.2, (0.0, 0.0), 'navigating')
+        assert m.reroutes == 1                     # within the minimum gap
+        assert REROUTE_MIN_GAP_S > 2 * ROUTE_CHECK_S
+    finally:
+        p.set_dynamic(None)

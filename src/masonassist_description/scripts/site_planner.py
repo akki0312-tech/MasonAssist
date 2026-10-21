@@ -22,6 +22,8 @@ import math
 import os
 import sys
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from worker_mover import OBSTACLES  # noqa: E402
 
@@ -51,6 +53,44 @@ class SitePlanner:
         self.lo = lo
         self.free = [[not _blocked(self._x(i), self._x(j), inflation)
                       for j in range(self.n)] for i in range(self.n)]
+        self.dynamic = None   # bool grid: learned obstacles (live_map), already inflated
+
+    def set_dynamic(self, mask):
+        """mask: n x n bool grid of learned obstacle cells (LiveMap.persistent),
+        or None. Inflated here by the same INFLATION_M as the static layout."""
+        if mask is None or not mask.any():
+            self.dynamic = None
+            return
+        r = int(math.ceil(self.inflation / self.res))
+        padded = np.pad(mask, r)
+        out = np.zeros_like(mask)
+        for di in range(-r, r + 1):
+            for dj in range(-r, r + 1):
+                if di * di + dj * dj <= r * r:
+                    out |= padded[r + di:r + di + self.n, r + dj:r + dj + self.n]
+        self.dynamic = out
+
+    def _is_free(self, i, j):
+        return self.free[i][j] and (self.dynamic is None or not self.dynamic[i, j])
+
+    def route_blocked(self, start, route):
+        """True if the remaining route (from the current pose through every
+        waypoint) crosses a learned obstacle. Samples within INFLATION_M +
+        0.1 m of the start are skipped, so passing close to something that
+        is already beside the robot doesn't count as 'blocked'."""
+        if self.dynamic is None or not route:
+            return False
+        pts = [tuple(start)] + [tuple(p) for p in route]
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            steps = max(int(math.hypot(x1 - x0, y1 - y0) / (self.res / 2)), 1)
+            for k in range(steps + 1):
+                x, y = x0 + (x1 - x0) * k / steps, y0 + (y1 - y0) * k / steps
+                if math.hypot(x - start[0], y - start[1]) < self.inflation + 0.1:
+                    continue
+                i, j = self._cell(x, y)
+                if self.dynamic[i, j]:
+                    return True
+        return False
 
     def _x(self, i):
         return self.lo + i * self.res
@@ -60,12 +100,12 @@ class SitePlanner:
         return clamp(x), clamp(y)
 
     def _nearest_free(self, c):
-        if self.free[c[0]][c[1]]:
+        if self._is_free(c[0], c[1]):
             return c
         best, best_d = None, math.inf
         for i in range(self.n):
             for j in range(self.n):
-                if self.free[i][j]:
+                if self._is_free(i, j):
                     d = (i - c[0]) ** 2 + (j - c[1]) ** 2
                     if d < best_d:
                         best, best_d = (i, j), d
@@ -77,7 +117,7 @@ class SitePlanner:
         for k in range(steps + 1):
             t = k / steps
             i, j = self._cell(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)
-            if not self.free[i][j]:
+            if not self._is_free(i, j):
                 return False
         return True
 
@@ -107,7 +147,7 @@ class SitePlanner:
                 nb = (c[0] + di, c[1] + dj)
                 if not (0 <= nb[0] < self.n and 0 <= nb[1] < self.n):
                     continue
-                if not self.free[nb[0]][nb[1]]:
+                if not self._is_free(nb[0], nb[1]):
                     continue
                 nc = c_cost + w
                 if nc < cost.get(nb, math.inf):
