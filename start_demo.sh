@@ -10,7 +10,7 @@
 set -u
 WS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_DIR=/tmp/masonassist_demo
-PATTERN='gz sim|vfh_plus_node\.py|mission_server\.py|worker_mover\.py|scan_frame_fix\.py|odom_to_tf_broadcaster\.py|robot_state_publisher|joint_state_publisher|ros_gz_bridge/parameter_bridge|ros2 launch masonassist_description'
+PATTERN='gz sim|vfh_plus_node\.py|safety_supervisor\.py|mission_server\.py|worker_mover\.py|scan_frame_fix\.py|odom_to_tf_broadcaster\.py|robot_state_publisher|joint_state_publisher|ros_gz_bridge/parameter_bridge|ros2 launch masonassist_description'
 
 running() {
     ps -eo pid=,args= | grep -E "$PATTERN" | grep -v -E "grep|stop_demo|start_demo"
@@ -75,12 +75,12 @@ if ! curl -s -m 2 -o /dev/null -w '%{http_code}' localhost:8080/api/state | grep
     echo "Dashboard backend did not come up - see $RUN_DIR/mission_server.log"; exit 1
 fi
 
-N=$(ps -eo args= | grep -E '^gz sim server|^gz sim -r -s|vfh_plus_node\.py|robot_state_publisher|joint_state_publisher|__node:=clock_bridge|__node:=world_service_bridge|__node:=masonassist_bridge|__node:=lidar_bridge|scan_frame_fix\.py|odom_to_tf_broadcaster\.py|worker_mover\.py|mission_server\.py' | grep -v grep | wc -l)
+N=$(ps -eo args= | grep -E '^gz sim server|^gz sim -r -s|vfh_plus_node\.py|safety_supervisor\.py|robot_state_publisher|joint_state_publisher|__node:=clock_bridge|__node:=world_service_bridge|__node:=masonassist_bridge|__node:=lidar_bridge|scan_frame_fix\.py|odom_to_tf_broadcaster\.py|worker_mover\.py|mission_server\.py' | grep -v grep | wc -l)
 if $HEADLESS; then
-    echo "Running processes: $N (expected 12 - headless, no Gazebo GUI)"
+    echo "Running processes: $N (expected 13 - headless, no Gazebo GUI)"
 else
     N=$((N + $(ps -eo args= | grep -c '[g]z sim gui')))
-    echo "Running processes: $N (expected 13 incl. Gazebo GUI)"
+    echo "Running processes: $N (expected 14 incl. Gazebo GUI)"
 fi
 echo "Dashboard: http://localhost:8080"
 echo "Stop with: ./stop_demo.sh"

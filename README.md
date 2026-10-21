@@ -16,6 +16,7 @@ This is a **simulation project**. Nothing here has run on physical hardware.
 - **Live obstacle map** — obstacles the LiDAR sees that are not in the site layout (debris, a new pallet) and that stay put for 4 s are learned into an occupancy grid; the robot reroutes around them immediately, and they clear again once the LiDAR sees through the empty space.
 - **Local obstacle avoidance** — a VFH+ (Vector Field Histogram Plus) controller drives between waypoints using live 360° LiDAR.
 - **Human-aware safety** — LiDAR returns that are *not* part of the known site layout are treated as possible people or debris: the robot slows to 40 % within 2 m and stops within 1 m in its path, then resumes 1 s after the path clears.
+- **Independent safety supervisor** — a separate node has the final say on every velocity command: it stops the robot if navigation, the LiDAR, odometry or the operator link goes silent, latches the e-stop, clamps speed, and blocks driving into anything at the body.
 - **Recovery and failure handling** — escape and rotate-in-place recovery; if a leg makes no progress for 45 s it is re-planned, and after 2 re-plans the mission fails cleanly with a reason.
 - **Operator controls** — pause, resume, cancel, emergency stop. Clearing an e-stop leaves the robot *paused*: it never starts moving again on its own.
 - **Live dashboard** — map with site layout, live LiDAR, trajectory, planned route and stations; mission, safety, queue and history panels; click the map to send the robot somewhere.
@@ -36,6 +37,7 @@ flowchart LR
   SFF["scan_frame_fix"]
   TF["odom_to_tf_broadcaster<br/>robot_state_publisher"]
   VFH["vfh_plus_node<br/>VFH+ core + safety gate"]
+  SUP["safety_supervisor<br/>watchdogs, e-stop latch,<br/>speed clamp, collision guard"]
   MS["mission_server<br/>missions, A* planner, live map,<br/>job queue, HTTP API"]
   WM["worker_mover"]
   UI["Browser dashboard<br/>localhost:8080"]
@@ -44,7 +46,9 @@ flowchart LR
   BRIDGE -- "/scan_raw" --> SFF -- "/scan" --> VFH
   BRIDGE -- "/odom" --> VFH
   BRIDGE -- "/odom" --> TF
-  VFH -- "/cmd_vel" --> BRIDGE
+  VFH -- "/cmd_vel_nav" --> SUP -- "/cmd_vel (20 Hz)" --> BRIDGE
+  SFF -- "/scan" --> SUP
+  MS -- "/mission_cmd, /operator_heartbeat" --> SUP
   MS -- "/goal_pose, /mission_cmd" --> VFH
   VFH -- "/mission_status, /safety_status" --> MS
   SFF -- "/scan" --> MS
@@ -55,6 +59,19 @@ flowchart LR
 ```
 
 **How a delivery works:** the operator queues a job in the dashboard → `mission_server` takes the next job, plans a route with A\* over the known layout plus any learned obstacles (keeping 0.7 m from both) and publishes one waypoint at a time on `/goal_pose` → `vfh_plus_node` steers toward the current waypoint with VFH+ on live LiDAR, while its safety gate limits speed near unmapped obstacles → every second `mission_server` checks whether the remaining route now crosses a learned obstacle and, if so, reroutes → it advances the waypoint when the robot reaches it and marks a station reached only when odometry confirms the robot is there → load/unload, next leg, and finally back to the dock.
+
+**Safety supervisor:** navigation never drives the robot directly. `vfh_plus_node` publishes `/cmd_vel_nav`; `safety_supervisor` is the only publisher of `/cmd_vel` and sends a command every 50 ms, zero unless all of these hold:
+
+| Check | Stops with reason |
+|---|---|
+| E-stop pressed — latched; after Clear E-Stop still zero until Resume | `estop`, `hold_after_estop` |
+| Mission cancelled — zero until a new goal | `cancelled` |
+| `/scan` or `/odom` older than 0.5 s | `stale_scan`, `stale_odom` |
+| Mission server heartbeat (`/operator_heartbeat`, 2 Hz) older than 2 s | `link_lost` |
+| Navigation command older than 0.3 s (node hung or crashed) | `stale_cmd` |
+| LiDAR return within 0.15 m of the body in the direction of travel — rotation still allowed | `collision_guard` |
+
+Speeds above 0.25 m/s / 0.5 rad/s are clamped. It runs separately from navigation, with its own rules in `safety_supervisor_core.py`, so a hung, crashed or misbehaving navigation node can't keep the robot moving.
 
 ---
 
@@ -132,6 +149,8 @@ Click anywhere on the map to send the robot there. Points outside the site or in
 
 **Panel (right)**
 - **Mission status** — `navigating`, `reached`, `blocked`, `recovering`, `stalled`, `yielding` (stopped for a person/obstacle), `paused`, `estopped`, `idle`.
+- **Safety supervisor** — `OK`, or why it's holding the robot (e-stop, hold, cancelled, stale LiDAR/odometry, operator link lost, obstacle at body), and whether speed is being clamped. `not running` if its status stops arriving.
+- **Velocity** — what navigation asked for (`/cmd_vel_nav`) next to what was sent to the robot (`/cmd_vel`).
 - **Safety** — `CLEAR`, `SLOW (distance)`, `STOP - yielding (distance)`, and how many unmapped returns are visible.
 - **Transport Missions** — `+ Queue …` buttons, the running job, waiting jobs (✕ to remove), Pause/Resume queue, Clear queue, and the current mission's legs, payload and elapsed time.
 - **Job History** — every finished job with result, run time, re-plans and failure reason.
@@ -172,9 +191,12 @@ curl -X POST localhost:8080/api/queue -H 'Content-Type: application/json' \
 |---|---|---|
 | `/scan` | `sensor_msgs/LaserScan` | `scan_frame_fix` → everyone (360° LiDAR, frame `laser_frame`) |
 | `/odom` | `nav_msgs/Odometry` | Gazebo `OdometryPublisher` → bridge |
-| `/cmd_vel` | `geometry_msgs/Twist` | `vfh_plus_node` → bridge → TrackedVehicle |
+| `/cmd_vel_nav` | `geometry_msgs/Twist` | `vfh_plus_node` → `safety_supervisor` |
+| `/cmd_vel` | `geometry_msgs/Twist` | `safety_supervisor` → bridge → TrackedVehicle (20 Hz, always) |
+| `/operator_heartbeat` | `std_msgs/String` | `mission_server` → `safety_supervisor` (2 Hz) |
+| `/supervisor_status` | `std_msgs/String` (JSON) | `safety_supervisor` → `mission_server`: `reason`, `clamped`, `front_clear_m` |
 | `/goal_pose` | `geometry_msgs/Point` | `mission_server` → `vfh_plus_node` (one waypoint at a time) |
-| `/mission_cmd` | `std_msgs/String` | `pause`, `resume`, `cancel`, `estop`, `clear_estop` |
+| `/mission_cmd` | `std_msgs/String` | `pause`, `resume`, `cancel`, `estop`, `clear_estop` (read by `vfh_plus_node` and `safety_supervisor`) |
 | `/mission_status` | `std_msgs/String` | `vfh_plus_node` → `mission_server` |
 | `/safety_status` | `std_msgs/String` (JSON) | `vfh_plus_node` → `mission_server` |
 | `/world/masonassist_world/set_pose` | `ros_gz_interfaces/SetEntityPose` | `worker_mover` → Gazebo |
@@ -196,6 +218,20 @@ Measured in simulation in this repository's VM. These are small samples — they
 
 **Safety** — a person-sized obstacle placed 0.75 m in front of the moving robot: it stopped within one 0.5 s sample, held still while the obstacle stayed, and resumed automatically after it was removed. In normal missions, passing workers caused slow-downs only, with no false stops from known structures.
 
+**Safety supervisor** — each condition triggered on its own while the robot was moving at ~0.2 m/s, speed taken from `/odom`:
+
+| Test | Result |
+|---|---|
+| Before the supervisor existed: navigation node frozen (`kill -STOP`) mid-drive | robot kept driving on its last command, **over 3 m** (x −0.49 → −3.72) |
+| Navigation node frozen | stopped in 0.34–0.38 s, moved 0.06–0.07 m (`stale_cmd` at 0.3 s) |
+| LiDAR relay (`scan_frame_fix`) frozen | stopped in 0.36 s, moved 0.07 m (`stale_scan` at 0.51 s) |
+| Mission server frozen | stopped in 1.67 s, moved 0.39 m (`link_lost` once the last heartbeat was 2 s old) |
+| 1.0 m/s injected on `/cmd_vel_nav` | measured top speed 0.250 m/s |
+| E-stop → Clear E-Stop → Resume, nav commands still coming | 0.000 → 0.000 (`hold_after_estop`) → 0.150 m/s |
+| Cancel, then a new goal | 0.000 (`cancelled`) → 0.150 m/s |
+| Driven straight at a box 0.44 m ahead, navigation frozen | stopped with 0.12 m between body and box (ground truth); turning was still allowed (72° in 2 s) |
+| Full missions with the supervisor in the loop | bricks_to_building complete 175.6 s (started 1.1 m from the dock), blocks_to_scaffold complete 186.1 s. During blocks, `stale_cmd` fired twice for 75 ms and 140 ms: navigation went quiet for over 0.3 s and the robot got zero until it came back |
+
 **Live obstacle map** — an unmapped 1.2 × 1.0 m pallet placed on the planned route to the brick pickup: the robot learned it (63 cells, all on the pallet, none elsewhere), rerouted around it 5 times across two legs with no stuck re-plans, and completed the mission in 170.2 s. After the pallet was removed, the learned cells cleared by themselves within ~6 s of the robot seeing through the space, and a full mission then completed in 148.4 s with 0 reroutes and 0 learned cells — passing workers were not learned.
 
 **Failure handling** — a goal sealed off by two temporary walls: re-planned at 46 s and 91 s, then the mission failed at 136 s with *"no progress toward goal after 2 replans"* and the robot stopped.
@@ -208,7 +244,7 @@ Measured in simulation in this repository's VM. These are small samples — they
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 python3 -m pytest src/masonassist_description/test/
 ```
-152 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
+169 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the safety supervisor, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
 
 ---
 
@@ -219,6 +255,8 @@ python3 -m pytest src/masonassist_description/test/
 - **Planning starts from an authored map** — the A\* planner knows the site layout as it was built into the world and adds obstacles it has seen with the LiDAR. There is no SLAM and no Nav2: the live map relies on the simulator's near-perfect odometry, and only learns objects that stay put for 4 s.
 - **"Unmapped" is not person recognition** — anything not in the layout (a person, debris, a new pallet) triggers the safety zones the same way.
 - **LiDAR self-occlusion mask** — two 9° bands where the robot's own tracks block the LiDAR are ignored. A very narrow obstacle that sits *only* inside those bands could go unseen; in that case the controller reports no data and stops rather than driving on.
+- **The emergency stop is software** — the supervisor sends zero velocity, but on a real robot the e-stop must also cut motor power in hardware. The supervisor itself runs as an ordinary ROS process; if it hangs, the TrackedVehicle plugin keeps executing its last command (measured: frozen supervisor, robot carried on at 0.2 m/s, 0.59 m in 3 s). The dashboard then shows `not running`; a real robot needs a motor-controller command timeout below this layer.
+- **The collision guard is a last resort** — it only checks a straight lane the width of the body in the direction of travel, ignores the two self-occlusion bands, and has a 0.15 m margin sized for 0.25 m/s.
 - **Workers are teleported**, not physics-driven, so they can't be pushed by the robot.
 - **Queue and history are in memory** and reset when the mission server restarts.
 - **Gazebo's 3D window is CPU-heavy** with software rendering; use `--headless` on slow machines.
@@ -230,12 +268,14 @@ python3 -m pytest src/masonassist_description/test/
 ```
 start_demo.sh / stop_demo.sh            one-command demo start/stop
 src/masonassist_description/
-  launch/gazebo.launch.py               simulation, bridges, robot spawn, VFH+ node
+  launch/gazebo.launch.py               simulation, bridges, robot spawn, VFH+ node, safety supervisor
   models/masonassist/model.sdf          robot model (tracks, LiDAR, odometry plugin)
   worlds/construction_site.world        construction site with stations and workers
   scripts/
     vfh_plus_core.py                    VFH+ algorithm (ROS-free)
     vfh_plus_node.py                    ROS controller: VFH+, recovery, escape, safety gate
+    safety_supervisor_core.py           independent safety rules (ROS-free)
+    safety_supervisor.py                ROS node: /cmd_vel_nav -> checks -> /cmd_vel
     safety_zones.py                     human-aware slow/stop logic (ROS-free)
     site_planner.py                     A* route planner on the known layout + learned obstacles (ROS-free)
     live_map.py                         live obstacle map from LiDAR (ROS-free)

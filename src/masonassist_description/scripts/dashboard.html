@@ -96,6 +96,7 @@
       <h3>Mission Status</h3>
       <div id="statusBox" class="status-badge status-idle">IDLE</div>
       <div class="kv" style="margin-top:8px"><span class="k">Safety (unmapped obstacles in path)</span><span class="v" id="safety">-</span></div>
+      <div class="kv"><span class="k">Safety supervisor (final say on /cmd_vel)</span><span class="v" id="supervisor">-</span></div>
     </div>
 
     <div class="card">
@@ -109,7 +110,8 @@
     <div class="card">
       <h3>Velocity</h3>
       <div class="row2">
-        <div class="kv"><span class="k">Commanded (/cmd_vel)</span><span class="v" id="cmdvel">-</span></div>
+        <div class="kv"><span class="k">Navigation asked (/cmd_vel_nav)</span><span class="v" id="cmdvelnav">-</span></div>
+        <div class="kv"><span class="k">Sent to robot (/cmd_vel)</span><span class="v" id="cmdvel">-</span></div>
         <div class="kv"><span class="k">Odometry estimate</span><span class="v" id="odomvel">-</span></div>
       </div>
     </div>
@@ -202,6 +204,18 @@ function renderSafety() {
   const label = {clear: 'CLEAR', slow: 'SLOW', stop: 'STOP - yielding'}[s.zone] || s.zone;
   el.textContent = label + d + `, ${s.unmapped} unmapped returns`;
   el.style.color = {clear: '#5fd38a', slow: '#ffcc00', stop: '#ff6b6b'}[s.zone] || '';
+}
+
+function renderSupervisor() {
+  const el = document.getElementById('supervisor');
+  const s = latestState.supervisor;
+  if (!s) { el.textContent = 'not running'; el.style.color = '#ff6b6b'; return; }
+  const labels = {ok: 'OK', estop: 'E-STOP', hold_after_estop: 'HOLD - press Resume',
+    cancelled: 'STOPPED - cancelled', stale_scan: 'STOP - LiDAR data stale',
+    stale_odom: 'STOP - odometry stale', link_lost: 'STOP - operator link lost',
+    stale_cmd: 'zero - no navigation command', collision_guard: 'BLOCKED - obstacle at body'};
+  el.textContent = (labels[s.reason] || s.reason) + (s.clamped ? ' (speed clamped)' : '');
+  el.style.color = s.reason === 'ok' ? '#5fd38a' : (s.reason === 'stale_cmd' ? '' : '#ff6b6b');
 }
 
 async function loadStations() {
@@ -515,6 +529,8 @@ async function poll() {
       ? `${fmt(latestState.goal.x)}, ${fmt(latestState.goal.y)}` : 'none';
     document.getElementById('cmdvel').textContent = latestState.cmd_vel
       ? `v=${fmt(latestState.cmd_vel.lin_x)} w=${fmt(latestState.cmd_vel.ang_z)}` : 'no /cmd_vel yet';
+    document.getElementById('cmdvelnav').textContent = latestState.cmd_vel_nav
+      ? `v=${fmt(latestState.cmd_vel_nav.lin_x)} w=${fmt(latestState.cmd_vel_nav.ang_z)}` : 'none yet';
     document.getElementById('odomvel').textContent = latestState.odom_twist
       ? `v=${fmt(latestState.odom_twist.lin_x)} w=${fmt(latestState.odom_twist.ang_z)}` : '-';
     document.getElementById('scan').textContent = latestState.scan
@@ -529,6 +545,7 @@ async function poll() {
     renderMission();
     renderQueue();
     renderSafety();
+    renderSupervisor();
     draw();
   } catch (e) {
     document.getElementById('connWarn').style.display = 'block';

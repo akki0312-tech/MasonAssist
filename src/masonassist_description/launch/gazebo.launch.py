@@ -78,6 +78,11 @@ def generate_launch_description():
                      'preserves normal manual /cmd_vel control with no competing '
                      'publisher. Do not enable together with enable_obstacle_avoidance - '
                      'both publish /cmd_vel and would fight each other.')
+    declare_require_operator_link = DeclareLaunchArgument(
+        'require_operator_link', default_value='true',
+        description='safety_supervisor stops the robot if the mission server heartbeat '
+                    '(/operator_heartbeat) is lost for 2 s. Set false when driving '
+                    'without mission_server.py (e.g. manual /cmd_vel_nav tests).')
     declare_headless = DeclareLaunchArgument(
         'headless', default_value='false',
         description='true = run the Gazebo server only (no 3D GUI window). In this VM '
@@ -320,6 +325,7 @@ def generate_launch_description():
         name='simple_obstacle_avoidance',
         output='screen',
         parameters=[{'use_sim_time': True}],
+        remappings=[('/cmd_vel', '/cmd_vel_nav')],   # goes through safety_supervisor
         condition=IfCondition(LaunchConfiguration('enable_obstacle_avoidance')),
     )
 
@@ -337,7 +343,25 @@ def generate_launch_description():
         name='vfh_plus_node',
         output='screen',
         parameters=[{'use_sim_time': True}],
+        remappings=[('/cmd_vel', '/cmd_vel_nav')],   # goes through safety_supervisor
         condition=IfCondition(LaunchConfiguration('enable_vfh_plus')),
+    )
+
+    # ----------------------------------------------------------------
+    # Safety supervisor: the only node that publishes the robot's /cmd_vel.
+    # Navigation publishes /cmd_vel_nav; the supervisor forwards it at a
+    # fixed 20 Hz only while e-stop/cancel/stale-sensor/stale-command/
+    # operator-link/speed/collision checks pass, and publishes zero
+    # otherwise. Measured before it existed: with the navigation node
+    # frozen mid-drive, the robot kept driving blind for over 3 m.
+    # require_operator_link: stop if mission_server's heartbeat is lost.
+    # ----------------------------------------------------------------
+    safety_supervisor_node = Node(
+        package='masonassist_description',
+        executable='safety_supervisor.py',
+        name='safety_supervisor',
+        output='screen',
+        parameters=[{'require_operator_link': LaunchConfiguration('require_operator_link')}],
     )
 
     return LaunchDescription([
@@ -350,6 +374,7 @@ def generate_launch_description():
         declare_enable_vfh_plus,
         declare_world_file,
         declare_headless,
+        declare_require_operator_link,
         validate_controller_selection,
         gazebo_sim,
         robot_state_publisher_node,
@@ -362,5 +387,6 @@ def generate_launch_description():
         scan_frame_fix_node,
         obstacle_avoidance_node,
         vfh_plus_node,
+        safety_supervisor_node,
         spawn_robot_node,
     ])

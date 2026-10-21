@@ -41,6 +41,7 @@ install(
     scripts/scan_frame_fix.py
     scripts/simple_obstacle_avoidance.py
     scripts/vfh_plus_node.py
+    scripts/safety_supervisor.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -50,5 +51,6 @@ install(
 install(
   FILES
     scripts/vfh_plus_core.py
+    scripts/safety_supervisor_core.py
   DESTINATION lib/${PROJECT_NAME}
 )

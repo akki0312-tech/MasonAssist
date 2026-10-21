@@ -55,21 +55,30 @@ class MissionServerNode(Node):
             'scan': None,            # {n,finite,min_finite,angle_min,angle_increment,
                                      #  ranges} - full scan so the dashboard can
                                      # plot real LiDAR points, or None
-            'cmd_vel': None,         # {lin_x, ang_z} - COMMANDED velocity or None
+            'cmd_vel': None,         # {lin_x, ang_z} - COMMANDED velocity (after the
+                                     # safety supervisor) or None
+            'cmd_vel_nav': None,     # {lin_x, ang_z} - what navigation asked for
             'mission_status': 'unknown',
             'goal': None,            # {x,y} or None - last goal this server sent
             'safety': None,          # {zone,nearest_m,unmapped} from vfh_plus_node, or None
+            'supervisor': None,      # {reason,clamped,front_clear_m} from safety_supervisor
         }
 
         self.goal_pub = self.create_publisher(Point, '/goal_pose', 10)
         self.cmd_pub = self.create_publisher(String, '/mission_cmd', 10)
+        # operator link: safety_supervisor stops the robot if this goes quiet
+        self.heartbeat_pub = self.create_publisher(String, '/operator_heartbeat', 10)
+        self.create_timer(0.5, lambda: self.heartbeat_pub.publish(String(data='mission_server')))
 
         self.create_subscription(Odometry, '/odom', self._odom_cb, 10)
         self.create_subscription(LaserScan, '/scan', self._scan_cb, 10)
         self.create_subscription(Twist, '/cmd_vel', self._cmd_vel_cb, 10)
+        self.create_subscription(Twist, '/cmd_vel_nav', self._cmd_vel_nav_cb, 10)
+        self.create_subscription(String, '/supervisor_status', self._supervisor_cb, 10)
         self.create_subscription(String, '/mission_status', self._status_cb, 10)
         self.create_subscription(String, '/safety_status', self._safety_cb, 10)
 
+        self.supervisor_t = -math.inf
         self.mission = None  # TransportMission or None
         self.queue = JobQueue()
         self.job_mission = None  # the TransportMission running queue.current, if any
@@ -109,6 +118,19 @@ class MissionServerNode(Node):
     def _cmd_vel_cb(self, msg: Twist) -> None:
         with self.lock:
             self.state['cmd_vel'] = {'lin_x': msg.linear.x, 'ang_z': msg.angular.z}
+
+    def _cmd_vel_nav_cb(self, msg: Twist) -> None:
+        with self.lock:
+            self.state['cmd_vel_nav'] = {'lin_x': msg.linear.x, 'ang_z': msg.angular.z}
+
+    def _supervisor_cb(self, msg: String) -> None:
+        try:
+            supervisor = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        with self.lock:
+            self.state['supervisor'] = supervisor
+            self.supervisor_t = self._now()
 
     def _status_cb(self, msg: String) -> None:
         with self.lock:
@@ -231,6 +253,8 @@ class MissionServerNode(Node):
         with self.lock:
             now = self._now()
             snapshot = dict(self.state)
+            if now - self.supervisor_t > 1.0:   # publishes at 20 Hz; silent = not running
+                snapshot['supervisor'] = None
             snapshot['mission'] = self.mission.to_dict(now) if self.mission else None
             snapshot['queue'] = self.queue.to_dict(now)
             cells = self.live_map.cells(now)
