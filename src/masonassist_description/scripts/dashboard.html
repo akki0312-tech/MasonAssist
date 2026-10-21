@@ -67,6 +67,12 @@
   .legs li.done { color:#5fd38a; }
   .legs li.active { color:#fff; font-weight:700; }
   .mission-err { color:#ff6b6b; font-size:11px; min-height:14px; }
+  .btn-queue { background:#3a4252; font-size:12px; }
+  .queue-banner { background:#5a2a1a; color:#ffcfb8; border-radius:6px; padding:6px 8px; font-size:12px; margin:4px 0; }
+  .job-remove { color:#ff8a8a; text-decoration:none; margin-left:4px; }
+  .legs li.job-complete { color:#5fd38a; }
+  .legs li.job-failed { color:#ff6b6b; }
+  .legs li.job-aborted { color:#9aa4b5; }
 </style>
 </head>
 <body>
@@ -123,10 +129,25 @@
       <h3>Transport Missions</h3>
       <div id="missionButtons"></div>
       <div class="mission-err" id="missionErr"></div>
+      <div class="queue-banner" id="queueBanner" style="display:none"></div>
+      <div class="kv"><span class="k">Running job</span><span class="v" id="queueCurrent">none</span></div>
+      <div class="kv"><span class="k">Queued jobs</span></div>
+      <ul class="legs" id="queueList"></ul>
+      <div class="row2">
+        <button class="btn-queue" id="queueToggle"
+                onclick="queueAction({action: latestState.queue && latestState.queue.paused ? 'resume' : 'pause'})">Pause queue</button>
+        <button class="btn-queue" onclick="queueAction({action: 'clear'})">Clear queue</button>
+      </div>
+      <div class="hint">Jobs run back to back. A failed or cancelled job pauses the queue until you resume it. Queue and history reset when the mission server restarts.</div>
       <div class="kv"><span class="k">Mission / phase</span><span class="v" id="missionPhase">none</span></div>
       <div class="kv"><span class="k">Payload</span><span class="v" id="missionPayload">-</span></div>
       <div class="kv"><span class="k">Elapsed (s)</span><span class="v" id="missionElapsed">-</span></div>
       <ul class="legs" id="missionLegs"></ul>
+    </div>
+
+    <div class="card">
+      <h3>Job History</h3>
+      <ul class="legs" id="jobHistory"><li>no finished jobs yet</li></ul>
     </div>
 
     <div class="card">
@@ -191,8 +212,8 @@ async function loadStations() {
     for (const m of data.missions || []) {
       const b = document.createElement('button');
       b.className = 'btn-mission';
-      b.textContent = m.name.replace(/_/g, ' ') + '  (' + m.legs.map(l => l.station).join(' → ') + ')';
-      b.onclick = () => startMission(m.name);
+      b.textContent = '+ Queue ' + m.name.replace(/_/g, ' ') + '  (' + m.legs.map(l => l.station).join(' → ') + ')';
+      b.onclick = () => queueAction({action: 'add', mission: m.name});
       box.appendChild(b);
     }
   } catch (e) {
@@ -200,17 +221,57 @@ async function loadStations() {
   }
 }
 
-async function startMission(name) {
+async function queueAction(body) {
   const err = document.getElementById('missionErr');
   err.textContent = '';
   try {
-    const res = await fetch('/api/mission', {
+    const res = await fetch('/api/queue', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({mission: name})
+      body: JSON.stringify(body)
     });
     if (!res.ok) err.textContent = (await res.json()).error || ('HTTP ' + res.status);
   } catch (e) {
     err.textContent = 'request failed';
+  }
+}
+
+const label = (name) => name.replace(/_/g, ' ');
+
+function renderQueue() {
+  const q = latestState.queue;
+  if (!q) return;
+  const banner = document.getElementById('queueBanner');
+  banner.style.display = q.paused ? 'block' : 'none';
+  banner.textContent = q.paused ? `Queue paused - ${q.pause_reason}` : '';
+  document.getElementById('queueToggle').textContent = q.paused ? 'Resume queue' : 'Pause queue';
+
+  const list = document.getElementById('queueList');
+  list.innerHTML = '';
+  if (!q.queued.length) list.innerHTML = '<li>no jobs waiting</li>';
+  for (const j of q.queued) {
+    const li = document.createElement('li');
+    li.textContent = `#${j.id} ${label(j.mission)} - waiting ${j.wait_s.toFixed(0)} s `;
+    const x = document.createElement('a');
+    x.textContent = '✕'; x.href = '#'; x.className = 'job-remove';
+    x.onclick = (ev) => { ev.preventDefault(); queueAction({action: 'remove', id: j.id}); };
+    li.appendChild(x);
+    list.appendChild(li);
+  }
+  document.getElementById('queueCurrent').textContent =
+    q.current ? `#${q.current.id} ${label(q.current.mission)} (${q.current.elapsed_s.toFixed(0)} s)` : 'none';
+
+  const hist = document.getElementById('jobHistory');
+  hist.innerHTML = '';
+  if (!q.history.length) hist.innerHTML = '<li>no finished jobs yet</li>';
+  for (const j of q.history) {
+    const li = document.createElement('li');
+    li.className = 'job-' + j.status;
+    let text = `#${j.id} ${label(j.mission)} - ${j.status}`;
+    if (j.elapsed_s !== null) text += ` in ${j.elapsed_s.toFixed(0)} s`;
+    if (j.replans) text += `, ${j.replans} replans`;
+    if (j.reason) text += ` (${j.reason})`;
+    li.textContent = text;
+    hist.appendChild(li);
   }
 }
 
@@ -453,6 +514,7 @@ async function poll() {
     statusEl.className = 'status-badge status-' + status;
 
     renderMission();
+    renderQueue();
     renderSafety();
     draw();
   } catch (e) {

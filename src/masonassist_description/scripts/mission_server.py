@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from worker_mover import OBSTACLES  # noqa: E402
 from transport_mission import MISSIONS, STATIONS, TransportMission, validate_goal  # noqa: E402
 from site_planner import SitePlanner  # noqa: E402
+from job_queue import JobQueue  # noqa: E402
 
 HTTP_PORT = 8080
 DASHBOARD_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dashboard.html')
@@ -69,6 +70,8 @@ class MissionServerNode(Node):
         self.create_subscription(String, '/safety_status', self._safety_cb, 10)
 
         self.mission = None  # TransportMission or None
+        self.queue = JobQueue()
+        self.job_mission = None  # the TransportMission running queue.current, if any
         self.planner = SitePlanner()
         self.create_timer(0.2, self._mission_tick)
 
@@ -117,16 +120,22 @@ class MissionServerNode(Node):
         return time.monotonic()
 
     def _mission_tick(self) -> None:
+        now = self._now()
+        goal = None
+        just_failed = False
         with self.lock:
-            if self.mission is None:
-                return
-            odom = self.state['odom']
-            odom_xy = (odom['x'], odom['y']) if odom else None
-            was_active = self.mission.active
-            goal = self.mission.update(self._now(), odom_xy, self.state['mission_status'])
-            just_failed = was_active and self.mission.phase == 'failed'
+            if self.mission is not None:
+                odom = self.state['odom']
+                odom_xy = (odom['x'], odom['y']) if odom else None
+                was_active = self.mission.active
+                goal = self.mission.update(now, odom_xy, self.state['mission_status'])
+                just_failed = was_active and self.mission.phase == 'failed'
+            self._record_finished_job(now)
+            next_goal = self._start_next_job(now)
         if goal is not None:
             self.publish_goal(*goal)
+        if next_goal is not None:
+            self.publish_goal(*next_goal)
         if just_failed:
             # stop VFH+ driving toward the abandoned goal (same path as operator cancel)
             self.get_logger().warn(f'mission failed: {self.mission.abort_reason}')
@@ -134,10 +143,72 @@ class MissionServerNode(Node):
             with self.lock:
                 self.state['goal'] = None
 
+    def _record_finished_job(self, now) -> None:
+        """Call with self.lock held. Moves the running job to history once
+        its mission is over (complete / failed / aborted - including aborts
+        caused by cancel or a manual map goal)."""
+        job, m = self.queue.current, self.job_mission
+        if job is None or (m is not None and m.active):
+            return
+        status = m.phase if m is not None and m.phase in ('complete', 'failed') else 'aborted'
+        reason = m.abort_reason if m is not None else 'mission lost'
+        self.queue.finish(job, status, reason, m.replans if m is not None else 0, now)
+        self.job_mission = None
+        self.get_logger().info(f'job #{job.id} {job.mission}: {status}' + (f' ({reason})' if reason else ''))
+
+    def _start_next_job(self, now):
+        """Call with self.lock held. Starts the next queued job if the robot
+        is free. Returns the first goal to publish, or None."""
+        if self.mission is not None and self.mission.active:
+            return None
+        job = self.queue.next_to_start()
+        if job is None:
+            return None
+        odom = self.state['odom']
+        start = (odom['x'], odom['y']) if odom else None
+        m = TransportMission(job.mission, now, start, self.planner)
+        self.queue.mark_started(job, now)
+        self.mission = m
+        self.job_mission = m
+        goal = m.current_goal()
+        if goal is None:
+            self.queue.finish(job, 'failed', m.abort_reason, 0, now)
+            self.job_mission = None
+            return None
+        self.get_logger().info(f'job #{job.id} started: {job.mission}')
+        return goal
+
+    def queue_action(self, data):
+        """POST /api/queue. Returns (http_code, message)."""
+        action = data.get('action')
+        now = self._now()
+        with self.lock:
+            try:
+                if action == 'add':
+                    job = self.queue.add(str(data.get('mission', '')), now)
+                    return 200, f'job #{job.id} queued'
+                if action == 'remove':
+                    self.queue.remove(int(data.get('id', -1)))
+                    return 200, 'removed'
+                if action == 'clear':
+                    self.queue.clear()
+                    return 200, 'cleared'
+                if action == 'pause':
+                    self.queue.pause()
+                    return 200, 'queue paused'
+                if action == 'resume':
+                    self.queue.resume()
+                    return 200, 'queue resumed'
+            except (ValueError, TypeError) as ex:
+                return 400, str(ex)
+        return 400, 'expected action: add|remove|clear|pause|resume'
+
     def get_state_json(self) -> bytes:
         with self.lock:
+            now = self._now()
             snapshot = dict(self.state)
-            snapshot['mission'] = self.mission.to_dict(self._now()) if self.mission else None
+            snapshot['mission'] = self.mission.to_dict(now) if self.mission else None
+            snapshot['queue'] = self.queue.to_dict(now)
         return json.dumps(snapshot).encode('utf-8')
 
     def publish_goal(self, x: float, y: float) -> None:
@@ -269,6 +340,12 @@ def make_handler(node: MissionServerNode):
                 code, message = node.manual_goal(x, y)
                 if code == 200:
                     self._send_json({'ok': True})
+                else:
+                    self._send_json({'error': message}, code)
+            elif self.path == '/api/queue':
+                code, message = node.queue_action(data)
+                if code == 200:
+                    self._send_json({'ok': True, 'message': message})
                 else:
                     self._send_json({'error': message}, code)
             elif self.path == '/api/mission':
