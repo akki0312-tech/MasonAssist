@@ -811,3 +811,28 @@ def test_sectors_in_span_wraparound_at_pi():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_horizon_lets_robot_approach_goal_in_front_of_distant_wall():
+    """Live regression: goal 1 m ahead, perpendicular wall 2.5 m ahead.
+    Without a horizon the wall vetoes every direction toward the goal."""
+    angles = np.radians(np.arange(-60.0, 60.0, 1.0))
+    ranges = 2.5 / np.cos(angles)            # flat wall at x = 2.5 m
+    keep = ranges <= 4.0
+    ranges, angles = ranges[keep], angles[keep]
+
+    without = VFHPlusCore(VFHParams(goal_direction=0.0)).process(ranges, angles)
+    assert all(abs(math.degrees(v.candidate_direction)) > 10 for v in without.candidate_valleys)
+
+    p = VFHParams(goal_direction=0.0)
+    p.horizon = 1.0 + p.r_effective
+    with_h = VFHPlusCore(p).process(ranges, angles)
+    assert with_h.state == VFHState.OK
+    assert abs(with_h.selected_direction) < math.radians(5)
+
+
+def test_horizon_still_sees_obstacles_before_the_goal():
+    p = VFHParams(goal_direction=0.0)
+    p.horizon = 3.0 + p.r_effective          # goal 3 m ahead
+    r = VFHPlusCore(p).process(np.array([1.2, 1.2, 1.2]), np.radians([-2.0, 0.0, 2.0]))
+    assert r.selected_direction is None or abs(r.selected_direction) > math.radians(10)

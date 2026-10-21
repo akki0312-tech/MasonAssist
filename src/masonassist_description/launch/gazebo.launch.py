@@ -222,11 +222,13 @@ def generate_launch_description():
         output='screen',
         arguments=[
             '/model/masonassist/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
-            '/model/masonassist/odometry@nav_msgs/msg/Odometry@gz.msgs.Odometry',
+            # OdometryPublisher output (see model.sdf) - TrackedVehicle's own
+            # /model/masonassist/odometry drifts badly under skid-steer slip.
+            '/model/masonassist/odometry_sim@nav_msgs/msg/Odometry@gz.msgs.Odometry',
         ],
         remappings=[
             ('/model/masonassist/cmd_vel', '/cmd_vel'),
-            ('/model/masonassist/odometry', '/odom'),
+            ('/model/masonassist/odometry_sim', '/odom'),
         ],
     )
 

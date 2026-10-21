@@ -373,3 +373,69 @@ def test_compute_twist_linear_never_negative_and_angular_clipped():
 
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__, '-v']))
+
+
+# ---------------------------------------------------------------------------
+# escape_linear_velocity - leaving the safety envelope
+# ---------------------------------------------------------------------------
+
+from vfh_plus_node import ESCAPE_SPEED, escape_linear_velocity  # noqa: E402
+
+R_ROBOT = 0.4475
+RANGE_MIN = 0.1
+
+
+def test_escape_reverses_away_from_front_obstacle_when_rear_clear():
+    # corner 0.45 m ahead-right, nothing behind
+    v = escape_linear_velocity([0.45, 5.0], [math.radians(-44), math.radians(170)], R_ROBOT, RANGE_MIN)
+    assert v == -ESCAPE_SPEED
+
+
+def test_escape_goes_forward_away_from_rear_obstacle_when_front_clear():
+    v = escape_linear_velocity([0.4, 5.0], [math.radians(160), 0.0], R_ROBOT, RANGE_MIN)
+    assert v == ESCAPE_SPEED
+
+
+def test_escape_refused_when_escape_path_blocked():
+    # obstacle ahead at 0.45 m AND another directly behind at 0.6 m
+    v = escape_linear_velocity([0.45, 0.6], [0.0, math.pi], R_ROBOT, RANGE_MIN)
+    assert v is None
+
+
+def test_escape_ignores_side_points_outside_swept_width():
+    # wall alongside at 0.5 m lateral does not block reversing
+    v = escape_linear_velocity([0.45, 0.5, 0.5], [0.0, math.pi / 2, -math.pi / 2], R_ROBOT, RANGE_MIN)
+    assert v == -ESCAPE_SPEED
+
+
+def test_escape_none_without_valid_points():
+    assert escape_linear_velocity([float('inf')], [0.0], R_ROBOT, RANGE_MIN) is None
+
+
+def test_compute_twist_pivots_without_forward_motion_at_large_error():
+    from vfh_plus_node import PIVOT_THRESHOLD_RAD
+    rclpy.init()
+    node = VFHPlusNode()
+    try:
+        t = node._compute_twist(PIVOT_THRESHOLD_RAD + 0.05)
+        assert t.linear.x == 0.0 and t.angular.z > 0.0
+        t = node._compute_twist(PIVOT_THRESHOLD_RAD - 0.05)
+        assert t.linear.x > 0.0
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_compute_twist_latches_turn_direction_near_pi():
+    rclpy.init()
+    node = VFHPlusNode()
+    try:
+        first = node._compute_twist(math.radians(170))     # turn left
+        assert first.angular.z > 0
+        flipped = node._compute_twist(math.radians(-172))   # goal wrapped to the other side
+        assert flipped.angular.z > 0, 'must keep turning the same way near +-180 deg'
+        normal = node._compute_twist(math.radians(-60))     # well inside: proportional again
+        assert normal.angular.z < 0
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()

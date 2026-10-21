@@ -31,6 +31,103 @@
             <scale>0.001 0.001 0.001</scale>
           </mesh>
         </geometry>
+        <!-- Construction-equipment yellow, so the robot reads as
+             identifiable site machinery rather than default grey.
+             Visual only - geometry/scale/collision above are untouched. -->
+        <material>
+          <ambient>0.85 0.6 0.05 1</ambient>
+          <diffuse>0.9 0.65 0.08 1</diffuse>
+          <specular>0.3 0.25 0.1 1</specular>
+        </material>
+      </visual>
+
+      <!-- Payload deck: a flat plate visual sitting on the chassis roof,
+           well within the chassis's own known footprint (x in
+           [-0.3625,0.3625], roof at local z=0.165 per the sensor-mount
+           comment above) - visual only, no new collision, so the
+           robot's actual collision geometry/footprint is unchanged. -->
+      <visual name="payload_deck_visual">
+        <pose>0 0 0.195 0 0 0</pose>
+        <geometry>
+          <box><size>0.55 0.4 0.06</size></box>
+        </geometry>
+        <material>
+          <ambient>0.2 0.2 0.22 1</ambient>
+          <diffuse>0.25 0.25 0.27 1</diffuse>
+        </material>
+      </visual>
+
+      <!-- Visual-only marker at the LiDAR's real mounting pose (see the
+           sensor element below - exact same pose, not a new location),
+           so the sensor is actually visible rather than invisible. -->
+      <visual name="lidar_housing_visual">
+        <pose>0.30 0 0.19 0 0 0</pose>
+        <geometry>
+          <cylinder><radius>0.035</radius><length>0.05</length></cylinder>
+        </geometry>
+        <material>
+          <ambient>0.05 0.05 0.05 1</ambient>
+          <diffuse>0.1 0.1 0.1 1</diffuse>
+        </material>
+      </visual>
+
+      <!-- Small front-facing marker so the robot's heading/orientation
+           is obvious at a glance in the GUI, matching the chassis's own
+           +X forward convention. -->
+      <visual name="heading_marker_visual">
+        <pose>0.36 0 0.17 0 0 0</pose>
+        <geometry>
+          <box><size>0.03 0.15 0.03</size></box>
+        </geometry>
+        <material>
+          <ambient>0.9 0.1 0.1 1</ambient>
+          <diffuse>0.95 0.15 0.15 1</diffuse>
+        </material>
+      </visual>
+
+      <!-- Body panels: visual-only thin plates closing the front, rear
+           and both sides of the chassis's own known footprint (X in
+           [-0.3625,0.3625], Z in [0,0.165], per the comment above) so
+           the robot reads as an enclosed transporter body rather than
+           an open skeletal frame. Y half-width (0.2) matches
+           payload_deck_visual exactly, which is already proven clear
+           of both tracks - no new collision, no change to the
+           chassis/track geometry, joints or sensor pose. -->
+      <visual name="body_panel_front">
+        <pose>0.3525 0 0.0925 0 0 0</pose>
+        <geometry><box><size>0.02 0.4 0.145</size></box></geometry>
+        <material>
+          <ambient>0.82 0.58 0.06 1</ambient>
+          <diffuse>0.87 0.63 0.08 1</diffuse>
+          <specular>0.3 0.25 0.1 1</specular>
+        </material>
+      </visual>
+      <visual name="body_panel_rear">
+        <pose>-0.3525 0 0.0925 0 0 0</pose>
+        <geometry><box><size>0.02 0.4 0.145</size></box></geometry>
+        <material>
+          <ambient>0.82 0.58 0.06 1</ambient>
+          <diffuse>0.87 0.63 0.08 1</diffuse>
+          <specular>0.3 0.25 0.1 1</specular>
+        </material>
+      </visual>
+      <visual name="body_panel_left">
+        <pose>0 0.19 0.0925 0 0 0</pose>
+        <geometry><box><size>0.725 0.02 0.145</size></box></geometry>
+        <material>
+          <ambient>0.82 0.58 0.06 1</ambient>
+          <diffuse>0.87 0.63 0.08 1</diffuse>
+          <specular>0.3 0.25 0.1 1</specular>
+        </material>
+      </visual>
+      <visual name="body_panel_right">
+        <pose>0 -0.19 0.0925 0 0 0</pose>
+        <geometry><box><size>0.725 0.02 0.145</size></box></geometry>
+        <material>
+          <ambient>0.82 0.58 0.06 1</ambient>
+          <diffuse>0.87 0.63 0.08 1</diffuse>
+          <specular>0.3 0.25 0.1 1</specular>
+        </material>
       </visual>
 
       <collision name="chassis_collision">
@@ -108,6 +205,10 @@
             <scale>0.001 0.001 0.001</scale>
           </mesh>
         </geometry>
+        <material>
+          <ambient>0.1 0.1 0.11 1</ambient>
+          <diffuse>0.12 0.12 0.13 1</diffuse>
+        </material>
       </visual>
 
       <collision name="left_track_collision">
@@ -158,6 +259,10 @@
             <scale>0.001 0.001 0.001</scale>
           </mesh>
         </geometry>
+        <material>
+          <ambient>0.1 0.1 0.11 1</ambient>
+          <diffuse>0.12 0.12 0.13 1</diffuse>
+        </material>
       </visual>
 
       <collision name="right_track_collision">
@@ -202,6 +307,24 @@
       <track_orientation>0 0 0</track_orientation>
       <min_velocity>-1.0</min_velocity>
       <max_velocity>1.0</max_velocity>
+    </plugin>
+
+    <!-- Odometry source for /odom. TrackedVehicle's own odometry (still
+         published on /model/masonassist/odometry, no longer bridged) is
+         dead-reckoned from commanded track speeds and ignores real slip:
+         measured against Gazebo ground truth after ~80 s of skid-steer
+         turning/recovery it was off by ~1.7 m and ~35 deg, which made
+         VFH+ steer from a wrong pose. OdometryPublisher derives odometry
+         from the model's actual simulated motion. In simulation this is
+         effectively perfect odometry - real hardware would need proper
+         localization instead. -->
+    <plugin name="gz::sim::systems::OdometryPublisher" filename="gz-sim-odometry-publisher-system">
+      <dimensions>2</dimensions>
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+      <odom_publish_frequency>30</odom_publish_frequency>
+      <odom_topic>/model/masonassist/odometry_sim</odom_topic>
+      <tf_topic>/model/masonassist/odometry_sim/tf</tf_topic>
     </plugin>
 
     <plugin name="gz::sim::systems::TrackController" filename="gz-sim-track-controller-system">

@@ -120,6 +120,18 @@ class VFHParams:
     # v1: fixed, no goal source exists yet.
     goal_direction: float = 0.0
 
+    # Optional planning horizon, m (None = d_max, the original behavior).
+    # A caller with a nearby goal sets it to goal_distance + r_effective:
+    # returns beyond the point where the robot will stop cannot be reached,
+    # and without this a wall 2.5 m BEHIND a goal 1 m away vetoed every
+    # direction toward that goal (observed live: open space, 0/72 sectors
+    # occupied, goal direction never accepted, robot orbited the goal).
+    horizon: Optional[float] = None
+
+    @property
+    def planning_horizon(self) -> float:
+        return self.d_max if self.horizon is None else min(self.d_max, self.horizon)
+
     @property
     def sector_width_rad(self) -> float:
         return math.radians(self.sector_width_deg)
@@ -398,7 +410,7 @@ def build_raw_histogram(
     n = params.num_sectors
     hist = np.zeros(n, dtype=float)
     for d, a in zip(ranges, angles):
-        if d > params.d_max:
+        if d > params.planning_horizon:
             continue
         mag = point_magnitude(d, params.d_max)
         half_angle = enlargement_half_angle(d, params.r_effective)
@@ -462,7 +474,8 @@ def find_valleys(
     sector_width = params.sector_width_rad
 
     def safe(candidate: float) -> bool:
-        return is_direction_safe(candidate, valid_ranges, valid_angles, params.r_effective, params.d_max)
+        return is_direction_safe(candidate, valid_ranges, valid_angles, params.r_effective,
+                                 params.planning_horizon)
 
     def accept_run(s: int, e: int, width: float, accepted: List[Valley], rejected: List[Valley]) -> None:
         found_safe = False
