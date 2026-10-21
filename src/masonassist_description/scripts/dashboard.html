@@ -216,7 +216,7 @@ async function startMission(name) {
 
 function missionActive() {
   const m = latestState.mission;
-  return m && m.phase !== 'complete' && m.phase !== 'aborted';
+  return m && !['complete', 'aborted', 'failed'].includes(m.phase);
 }
 
 function renderMission() {
@@ -231,7 +231,10 @@ function renderMission() {
   }
   let phase = `${m.name} / ${m.phase}`;
   if (m.abort_reason) phase += ` (${m.abort_reason})`;
-  document.getElementById('missionPhase').textContent = phase;
+  if (m.replans) phase += ` - replans: ${m.replans}`;
+  const phaseEl = document.getElementById('missionPhase');
+  phaseEl.textContent = phase;
+  phaseEl.style.color = m.phase === 'failed' ? '#ff6b6b' : '';
   document.getElementById('missionPayload').textContent = m.payload;
   document.getElementById('missionElapsed').textContent = m.elapsed_s.toFixed(1);
   legsEl.innerHTML = '';

@@ -120,3 +120,70 @@ def test_goto_mission_routes_behind_partition_and_completes_without_dwell():
     assert m.phase == 'complete' and m.payload == 'empty'
     d = m.to_dict(31.0)
     assert d['legs'] == [{'station': 'goal', 'action': 'travel', 'x': -3.0, 'y': -3.0}]
+
+
+# ---------------------------------------------------------------------------
+# no-progress detection -> replan -> fail
+# ---------------------------------------------------------------------------
+
+from transport_mission import MAX_REPLANS, NO_PROGRESS_S  # noqa: E402
+
+
+class _CountingPlanner:
+    """Straight-line planner that counts calls."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def plan(self, start, goal):
+        self.calls += 1
+        return [tuple(goal)]
+
+
+def test_no_progress_triggers_replan():
+    p = _CountingPlanner()
+    m = TransportMission('bricks_to_building', 0.0, (0.0, 0.0), p)
+    stuck = (-1.0, -1.0)
+    m.update(1.0, stuck, 'navigating')
+    assert m.update(1.0 + NO_PROGRESS_S / 2, stuck, 'navigating') is None
+    goal = m.update(2.0 + NO_PROGRESS_S, stuck, 'navigating')
+    assert goal == _at('brick_pickup') and m.replans == 1 and p.calls == 2
+    assert m.active
+
+
+def test_real_progress_resets_the_timer():
+    m = TransportMission('bricks_to_building', 0.0, (0.0, 0.0), _CountingPlanner())
+    m.update(1.0, (0.0, 0.0), 'navigating')
+    m.update(NO_PROGRESS_S * 0.9, (-1.0, -1.0), 'navigating')   # moved ~1.4 m closer
+    m.update(NO_PROGRESS_S * 1.5, (-1.0, -1.0), 'navigating')
+    assert m.replans == 0
+
+
+def test_time_paused_yielding_or_loading_never_counts():
+    m = TransportMission('bricks_to_building', 0.0, (0.0, 0.0), _CountingPlanner())
+    stuck = (-1.0, -1.0)
+    m.update(1.0, stuck, 'navigating')
+    t = 1.0
+    for status in ('paused', 'yielding', 'estopped'):
+        for _ in range(20):
+            t += NO_PROGRESS_S / 10
+            m.update(t, stuck, status)
+    assert m.replans == 0 and m.active
+    # loading dwell at the pickup does not count either
+    m.update(t + 1, _at('brick_pickup'), 'reached')
+    assert m.phase == 'loading'
+
+
+def test_fails_cleanly_after_max_replans():
+    m = TransportMission('bricks_to_building', 0.0, (0.0, 0.0), _CountingPlanner())
+    stuck = (-1.0, -1.0)
+    t = 1.0
+    m.update(t, stuck, 'navigating')
+    for _ in range(MAX_REPLANS + 1):
+        t += NO_PROGRESS_S + 1
+        m.update(t, stuck, 'navigating')
+        m.update(t + 0.1, stuck, 'navigating')   # re-baseline after each replan
+    assert m.phase == 'failed' and not m.active
+    assert 'no progress toward brick_pickup' in m.abort_reason
+    assert m.update(t + 100, stuck, 'navigating') is None
+    assert m.to_dict(t)['replans'] == MAX_REPLANS

@@ -122,9 +122,17 @@ class MissionServerNode(Node):
                 return
             odom = self.state['odom']
             odom_xy = (odom['x'], odom['y']) if odom else None
+            was_active = self.mission.active
             goal = self.mission.update(self._now(), odom_xy, self.state['mission_status'])
+            just_failed = was_active and self.mission.phase == 'failed'
         if goal is not None:
             self.publish_goal(*goal)
+        if just_failed:
+            # stop VFH+ driving toward the abandoned goal (same path as operator cancel)
+            self.get_logger().warn(f'mission failed: {self.mission.abort_reason}')
+            self.cmd_pub.publish(String(data='cancel'))
+            with self.lock:
+                self.state['goal'] = None
 
     def get_state_json(self) -> bytes:
         with self.lock:

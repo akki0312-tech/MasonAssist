@@ -20,6 +20,18 @@ from worker_mover import OBSTACLES  # noqa: E402
 ARRIVAL_TOLERANCE_M = 0.35   # vfh_plus_node GOAL_TOLERANCE_M is 0.3
 WAYPOINT_REACHED_M = 0.35    # intermediate route waypoints; larger values let the robot cut corners
 DWELL_S = 3.0                # simulated load/unload time (wall clock)
+
+# No-progress detection (wall clock). The node's 'stalled' status only covers
+# CONTINUOUS VFH+ blockage; seen live, the robot could also keep reporting
+# 'navigating' while making no real progress (sliding along a wall toward an
+# unreachable point, orbiting a goal) and would do so forever. Progress is the
+# remaining route length shrinking by PROGRESS_EPS_M; without it for
+# NO_PROGRESS_S the leg is replanned from the current pose, and after
+# MAX_REPLANS replans without progress the mission fails cleanly.
+PROGRESS_EPS_M = 0.3
+NO_PROGRESS_S = 45.0
+MAX_REPLANS = 2
+HOLD_STATUSES = ('paused', 'estopped', 'yielding')   # robot deliberately not moving
 MIN_STATION_CLEARANCE_M = 0.6  # ~ VFH+ r_effective (0.5975 m)
 
 STATIONS = {
@@ -95,6 +107,10 @@ class TransportMission:
         self.abort_reason = None
         self.planner = planner
         self.route = []
+        self.replans = 0
+        self.best_remaining = None
+        self.last_progress_t = now
+        self._last_update_t = now
         self._plan_leg(start_xy, now)
 
     @classmethod
@@ -105,7 +121,41 @@ class TransportMission:
 
     @property
     def active(self):
-        return self.phase not in ('complete', 'aborted')
+        return self.phase not in ('complete', 'aborted', 'failed')
+
+    def _remaining(self, odom_xy):
+        if not self.route:
+            return 0.0
+        total = math.hypot(odom_xy[0] - self.route[0][0], odom_xy[1] - self.route[0][1])
+        for (ax, ay), (bx, by) in zip(self.route, self.route[1:]):
+            total += math.hypot(bx - ax, by - ay)
+        return total
+
+    def _reset_progress(self, now):
+        self.best_remaining = None
+        self.last_progress_t = now
+
+    def _check_progress(self, now, odom_xy, nav_status):
+        """Returns a replanned goal, or None. May fail the mission."""
+        if nav_status in HOLD_STATUSES:
+            return None
+        remaining = self._remaining(odom_xy)
+        if self.best_remaining is None or remaining < self.best_remaining - PROGRESS_EPS_M:
+            self.best_remaining = remaining
+            self.last_progress_t = now
+            return None
+        if now - self.last_progress_t <= NO_PROGRESS_S:
+            return None
+        station = self.legs[self.leg_index][0]
+        if self.replans >= MAX_REPLANS:
+            self.phase = 'failed'
+            self.abort_reason = f'no progress toward {station} after {self.replans} replans'
+            self.finished_at = now
+            self.route = []
+            return None
+        self.replans += 1
+        self._plan_leg(odom_xy, now)
+        return self.current_goal()
 
     def _xy(self, station):
         if station in self.points:
@@ -114,6 +164,7 @@ class TransportMission:
         return (x, y)
 
     def _plan_leg(self, from_xy, now):
+        self._reset_progress(now)
         sx, sy = self._xy(self.legs[self.leg_index][0])
         if self.planner is None or from_xy is None:
             self.route = [(sx, sy)]
@@ -136,6 +187,10 @@ class TransportMission:
             return None
 
         station, action = self.legs[self.leg_index]
+        dt = now - self._last_update_t
+        self._last_update_t = now
+        if nav_status in HOLD_STATUSES or self.phase in ('loading', 'unloading'):
+            self.last_progress_t += dt   # clock paused: not trying to move
 
         if self.phase in ('loading', 'unloading'):
             if now < self.dwell_until:
@@ -145,6 +200,10 @@ class TransportMission:
 
         if odom_xy is None:
             return None
+
+        replanned = self._check_progress(now, odom_xy, nav_status)
+        if replanned is not None or not self.active:
+            return replanned
 
         # intermediate waypoints: pure distance check, no 'reached' needed
         advanced = False
@@ -199,6 +258,8 @@ class TransportMission:
             'elapsed_s': round(end - self.started_at, 1),
             'abort_reason': self.abort_reason,
             'route': [{'x': x, 'y': y} for x, y in self.route],
+            'replans': self.replans,
+            'no_progress_s': round(max(0.0, now - self.last_progress_t), 1) if self.active else None,
         }
 
 
