@@ -5,7 +5,8 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, SetEnvironmentVariable
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution, TextSubstitution
+from launch.substitutions import (Command, LaunchConfiguration, PathJoinSubstitution,
+                                  PythonExpression, TextSubstitution)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -77,6 +78,12 @@ def generate_launch_description():
                      'preserves normal manual /cmd_vel control with no competing '
                      'publisher. Do not enable together with enable_obstacle_avoidance - '
                      'both publish /cmd_vel and would fight each other.')
+    declare_headless = DeclareLaunchArgument(
+        'headless', default_value='false',
+        description='true = run the Gazebo server only (no 3D GUI window). In this VM '
+                    'the software-rendered GUI alone used ~2 of 4 CPU cores and held the '
+                    'simulation to ~0.57x real time; the mission dashboard shows the robot, '
+                    'LiDAR and missions without it.')
     declare_world_file = DeclareLaunchArgument(
         'world_file', default_value='masonassist.world',
         description='World file to load, resolved under worlds/. Default is the '
@@ -148,6 +155,7 @@ def generate_launch_description():
         launch_arguments={
             'gz_args': [
                 TextSubstitution(text='-r '),
+                PythonExpression(["'-s ' if '", LaunchConfiguration('headless'), "' == 'true' else ''"]),
                 PathJoinSubstitution([pkg_share, 'worlds', LaunchConfiguration('world_file')]),
             ],
         }.items(),
@@ -192,6 +200,22 @@ def generate_launch_description():
         ],
         remappings=[
             ('/world/masonassist_world/clock', '/clock'),
+        ],
+    )
+
+    # ----------------------------------------------------------------
+    # set_pose service bridge (ROS 2 -> Gazebo), used by worker_mover.py to
+    # move the construction workers through one persistent client instead of
+    # spawning a `gz service` CLI process per worker per tick (that cost
+    # ~0.25 s per call and held the simulation to ~0.66x real time).
+    # ----------------------------------------------------------------
+    world_service_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='world_service_bridge',
+        output='screen',
+        arguments=[
+            '/world/masonassist_world/set_pose@ros_gz_interfaces/srv/SetEntityPose',
         ],
     )
 
@@ -325,11 +349,13 @@ def generate_launch_description():
         declare_enable_obstacle_avoidance,
         declare_enable_vfh_plus,
         declare_world_file,
+        declare_headless,
         validate_controller_selection,
         gazebo_sim,
         robot_state_publisher_node,
         joint_state_publisher_node,
         clock_bridge,
+        world_service_bridge,
         masonassist_bridge,
         odom_tf_broadcaster_node,
         lidar_bridge,

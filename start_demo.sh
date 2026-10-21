@@ -1,8 +1,10 @@
 #!/bin/bash
 # Start the full MasonAssist demo: Gazebo construction site + robot + VFH+
 # navigation, moving workers, and the mission-control dashboard backend.
-#   ./start_demo.sh            start (refuses if anything is already running)
-#   ./start_demo.sh --restart  stop everything first, then start
+#   ./start_demo.sh             start (refuses if anything is already running)
+#   ./start_demo.sh --restart   stop everything first, then start
+#   ./start_demo.sh --headless  no Gazebo 3D window (much faster in this VM;
+#                               the dashboard still shows everything)
 # Each component runs in its own process group so stop_demo.sh can kill the
 # whole tree. Logs: /tmp/masonassist_demo/*.log
 set -u
@@ -14,7 +16,16 @@ running() {
     ps -eo pid=,args= | grep -E "$PATTERN" | grep -v -E "grep|stop_demo|start_demo"
 }
 
-if [ "${1:-}" = "--restart" ]; then
+RESTART=false; HEADLESS=false
+for arg in "$@"; do
+    case "$arg" in
+        --restart) RESTART=true ;;
+        --headless) HEADLESS=true ;;
+        *) echo "unknown option: $arg"; exit 2 ;;
+    esac
+done
+
+if $RESTART; then
     "$WS/stop_demo.sh" || exit 1
 fi
 
@@ -41,7 +52,7 @@ launch() {  # launch <name> <command...>
 
 echo "[1/3] Gazebo + robot + VFH+ navigation..."
 launch sim ros2 launch masonassist_description gazebo.launch.py \
-    world_file:=construction_site.world enable_vfh_plus:=true
+    world_file:=construction_site.world enable_vfh_plus:=true headless:=$HEADLESS
 for i in $(seq 1 90); do
     grep -q "Entity creation successful" "$RUN_DIR/sim.log" 2>/dev/null && break
     sleep 1
@@ -64,7 +75,12 @@ if ! curl -s -m 2 -o /dev/null -w '%{http_code}' localhost:8080/api/state | grep
     echo "Dashboard backend did not come up - see $RUN_DIR/mission_server.log"; exit 1
 fi
 
-N=$(ps -eo args= | grep -E 'gz sim server|vfh_plus_node\.py|robot_state_publisher|joint_state_publisher|__node:=clock_bridge|__node:=masonassist_bridge|__node:=lidar_bridge|scan_frame_fix\.py|odom_to_tf_broadcaster\.py|worker_mover\.py|mission_server\.py' | grep -v grep | wc -l)
-echo "Running processes: $N (expected 11)"
+N=$(ps -eo args= | grep -E '^gz sim server|^gz sim -r -s|vfh_plus_node\.py|robot_state_publisher|joint_state_publisher|__node:=clock_bridge|__node:=world_service_bridge|__node:=masonassist_bridge|__node:=lidar_bridge|scan_frame_fix\.py|odom_to_tf_broadcaster\.py|worker_mover\.py|mission_server\.py' | grep -v grep | wc -l)
+if $HEADLESS; then
+    echo "Running processes: $N (expected 12 - headless, no Gazebo GUI)"
+else
+    N=$((N + $(ps -eo args= | grep -c '[g]z sim gui')))
+    echo "Running processes: $N (expected 13 incl. Gazebo GUI)"
+fi
 echo "Dashboard: http://localhost:8080"
 echo "Stop with: ./stop_demo.sh"

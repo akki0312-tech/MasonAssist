@@ -33,7 +33,6 @@ that file, and are re-validated here at every startup as a live check,
 not just a one-time design note.
 """
 import math
-import subprocess
 import sys
 import time
 
@@ -207,17 +206,20 @@ def _yaw_pitch_quaternion(yaw, pitch):
     return x, y, z, w
 
 
-def _set_pose(name, x, y, z, yaw, pitch=0.0):
+SET_POSE_SERVICE = f'/world/{WORLD}/set_pose'   # bridged by gazebo.launch.py
+
+
+def _pose_request(name, x, y, z, yaw, pitch=0.0):
+    from ros_gz_interfaces.msg import Entity
+    from ros_gz_interfaces.srv import SetEntityPose
     qx, qy, qz, qw = _yaw_pitch_quaternion(yaw, pitch)
-    req = (f'name: "{name}" '
-           f'position: {{x: {x:.4f} y: {y:.4f} z: {z:.4f}}} '
-           f'orientation: {{x: {qx:.6f} y: {qy:.6f} z: {qz:.6f} w: {qw:.6f}}}')
-    subprocess.run(
-        ['gz', 'service', '-s', f'/world/{WORLD}/set_pose',
-         '--reqtype', 'gz.msgs.Pose', '--reptype', 'gz.msgs.Boolean',
-         '--timeout', '300', '--req', req],
-        capture_output=True, timeout=2,
-    )
+    req = SetEntityPose.Request()
+    req.entity.name = name
+    req.entity.type = Entity.MODEL
+    p = req.pose
+    p.position.x, p.position.y, p.position.z = x, y, z
+    p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w = qx, qy, qz, qw
+    return req
 
 
 def main():
@@ -230,20 +232,38 @@ def main():
               'moving anything.', file=sys.stderr, flush=True)
         sys.exit(1)
 
+    # One persistent ROS client to the bridged Gazebo service. The previous
+    # version launched a `gz service` CLI process per worker per tick: each
+    # took ~0.25 s and created a new transport node, so the loop really ran
+    # at ~2 Hz and dragged the simulation to ~0.66x real time (measured:
+    # 0.99x with this process paused).
+    import rclpy
+    from ros_gz_interfaces.srv import SetEntityPose
+    rclpy.init()
+    node = rclpy.create_node('worker_mover')
+    client = node.create_client(SetEntityPose, SET_POSE_SERVICE)
+    if not client.wait_for_service(timeout_sec=30.0):
+        print(f'worker_mover: service {SET_POSE_SERVICE} not available - is the '
+              'simulation (gazebo.launch.py) running?', file=sys.stderr, flush=True)
+        sys.exit(1)
+
+    pending = {}  # worker -> future; at most one request in flight per worker
     start = time.monotonic()
     print('worker_mover started - moving', list(valid_workers.keys()), flush=True)
-    while True:
-        t = time.monotonic() - start
+    while rclpy.ok():
+        tick_start = time.monotonic()
+        t = tick_start - start
         walk_phase = 2.0 * math.pi * WALK_FREQ_HZ * t
         bob = BOB_AMPLITUDE_M * abs(math.sin(walk_phase))
         lean = LEAN_AMPLITUDE_RAD * math.sin(walk_phase)
         for name, waypoints in valid_workers.items():
+            if name in pending and not pending[name].done():
+                continue
             x, y, yaw = _interp(waypoints, t)
-            try:
-                _set_pose(name, x, y, WORKER_HEIGHT + bob, yaw, pitch=lean)
-            except subprocess.TimeoutExpired:
-                pass
-        time.sleep(TICK_S)
+            pending[name] = client.call_async(
+                _pose_request(name, x, y, WORKER_HEIGHT + bob, yaw, pitch=lean))
+        while time.monotonic() - tick_start < TICK_S:
+            rclpy.spin_once(node, timeout_sec=max(0.0, TICK_S - (time.monotonic() - tick_start)))
 
 
 if __name__ == '__main__':
