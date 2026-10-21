@@ -1,5 +1,9 @@
 # MasonAssist — ROS 2 / Gazebo Development Handoff
 
+> **See [README.md](README.md) for the current system and how to run the demo.** This
+> document records the original robot geometry, TF and propulsion validation; its
+> "Not Yet Implemented" list below is historical.
+
 > **Status:** This document reflects the current, verified simulation baseline. Earlier
 > revisions of this file described an in-progress diagnostic state (invisible RViz
 > geometry, unverified mesh transforms, no Gazebo integration). Those issues are
