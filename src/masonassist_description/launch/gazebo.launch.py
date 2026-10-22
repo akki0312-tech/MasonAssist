@@ -361,7 +361,8 @@ def generate_launch_description():
         executable='safety_supervisor.py',
         name='safety_supervisor',
         output='screen',
-        parameters=[{'require_operator_link': LaunchConfiguration('require_operator_link')}],
+        parameters=[{'use_sim_time': True,
+                     'require_operator_link': LaunchConfiguration('require_operator_link')}],
     )
 
     return LaunchDescription([

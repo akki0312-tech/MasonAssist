@@ -69,6 +69,8 @@ flowchart LR
 | `/scan` or `/odom` older than 0.5 s | `stale_scan`, `stale_odom` |
 | Mission server heartbeat (`/operator_heartbeat`, 2 Hz) older than 2 s | `link_lost` |
 | Navigation command older than 0.3 s (node hung or crashed) | `stale_cmd` |
+
+Command and sensor ages are measured in **sim time** (which is wall time on a real robot), with a 1.0 s wall-clock backstop. With the Gazebo window open, the simulation itself sometimes pauses, for up to 0.82 s of wall time in which only ~0.12 s of sim time passes. The robot can't move during those pauses, so they don't count as stale. Judged in wall time, they caused up to 11 false stops per mission.
 | LiDAR return within 0.15 m of the body in the direction of travel — rotation still allowed | `collision_guard` |
 
 Speeds above 0.25 m/s / 0.5 rad/s are clamped. It runs separately from navigation, with its own rules in `safety_supervisor_core.py`, so a hung, crashed or misbehaving navigation node can't keep the robot moving.
@@ -108,7 +110,7 @@ source install/setup.bash
 
 Then open **http://localhost:8080**.
 
-`start_demo.sh` refuses to start if a stack is already running (avoids two controllers fighting over `/cmd_vel`). Logs go to `/tmp/masonassist_demo/`.
+`start_demo.sh` refuses to start if a stack is already running (avoids two controllers fighting over `/cmd_vel`). After startup it waits 5 s and checks that every component is still running and that odometry, LiDAR, supervisor and navigation status are all flowing. If anything is missing it names it, stops the partly started stack and exits with an error. Logs go to `/tmp/masonassist_demo/`.
 
 <details>
 <summary>Running the pieces manually (three terminals)</summary>
@@ -231,6 +233,9 @@ Measured in simulation in this repository's VM. These are small samples — they
 | Cancel, then a new goal | 0.000 (`cancelled`) → 0.150 m/s |
 | Driven straight at a box 0.44 m ahead, navigation frozen | stopped with 0.12 m between body and box (ground truth); turning was still allowed (72° in 2 s) |
 | Full missions with the supervisor in the loop | bricks_to_building complete 175.6 s (started 1.1 m from the dock), blocks_to_scaffold complete 186.1 s. During blocks, `stale_cmd` fired twice for 75 ms and 140 ms: navigation went quiet for over 0.3 s and the robot got zero until it came back |
+| Same bricks mission with the Gazebo window open (0.8× real time) | wall-clock timeouts: 9 `stale_cmd` + 2 `stale_scan` false stops; after switching to sim-time ages: 0 false stops (3,618 status samples all `ok`). The freeze tests above were repeated after the change with the same results (0.32 / 0.38 / 1.76 s) |
+| `/clock` bridge frozen | navigation kept driving on live LiDAR, correctly: nothing it uses was stale |
+| `/clock` bridge **and** navigation node frozen | stopped in 1.04 s, moved 0.21 m (`stale_cmd` from the 1.0 s wall-clock backstop) |
 
 **Richer site (current world)** — after adding the site facilities and equipment (15 new obstacles, among them a formwork stack placed on the straight-line brick route), with the safety supervisor in the loop and each run from a clean restart:
 
@@ -239,7 +244,7 @@ Measured in simulation in this repository's VM. These are small samples — they
 | bricks_to_building ×2 | 2/2 complete | 170.7 / 169.3 | 0.29 / 0.28 m | 0 / 0 | 0 / 0 |
 | blocks_to_scaffold ×3 | 3/3 complete | 185.5 / 199.4\* / 182.7 | 0.27 / 0.28 / 0.28 m | 3 / 3 / 0 | 0 / 0 |
 
-The planner now takes the brick legs around the formwork stack (+0.46 m and +0.62 m). Five map-click goals into the new areas (west yard past the formwork, gate, beside the site office, east yard by the generator, back to dock) were all reached, each within 0.27–0.29 m by ground truth, with no false stops. The 3 learned cells in the first two blocks runs showed an **existing** registry error: `pipe_pile` is rolled 90°, so its pipes reach 0.15 m beyond its obstacle box. `rebar_bundle` and `timber_stack` had the same kind of error. All three boxes were corrected, and the third blocks run learned 0 cells. \*The 199.4 s run had an extra logging process running alongside it; the sim slows under that load and mission time is wall-clock.
+The planner now takes the brick legs around the formwork stack (+0.46 m and +0.62 m). Five map-click goals into the new areas (west yard past the formwork, gate, beside the site office, east yard by the generator, back to dock) were all reached, each within 0.27–0.29 m by ground truth, with no false stops. The 3 learned cells in the first two blocks runs showed an **existing** registry error: `pipe_pile` is rolled 90°, so its pipes reach 0.15 m beyond its obstacle box. `rebar_bundle` and `timber_stack` had the same kind of error. All three boxes were corrected, and the third blocks run learned 0 cells. A test now checks each model's real 3D shape extents against the registry, and it caught two more boxes that were too small (the site office's entry steps and the skip's outward-leaning end walls). \*The 199.4 s run had an extra logging process running alongside it; the sim slows under that load and mission time is wall-clock.
 
 **Live obstacle map** — an unmapped 1.2 × 1.0 m pallet placed on the planned route to the brick pickup: the robot learned it (63 cells, all on the pallet, none elsewhere), rerouted around it 5 times across two legs with no stuck re-plans, and completed the mission in 170.2 s. After the pallet was removed, the learned cells cleared by themselves within ~6 s of the robot seeing through the space, and a full mission then completed in 148.4 s with 0 reroutes and 0 learned cells — passing workers were not learned.
 
@@ -253,7 +258,7 @@ The planner now takes the brick legs around the formwork stack (+0.46 m and +0.6
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 python3 -m pytest src/masonassist_description/test/
 ```
-171 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the safety supervisor, world-vs-obstacle-registry consistency, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
+176 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the safety supervisor, world-vs-obstacle-registry consistency, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
 
 ---
 

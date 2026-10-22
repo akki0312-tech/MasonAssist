@@ -16,6 +16,7 @@ import time
 
 import rclpy
 from geometry_msgs.msg import Point, Twist
+from rclpy.clock import Clock, ClockType
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
@@ -40,30 +41,30 @@ class SafetySupervisor(Node):
         self.create_subscription(Twist, '/cmd_vel_nav', self._nav_cb, 10)
         self.create_subscription(String, '/mission_cmd', self._mission_cmd_cb, 10)
         self.create_subscription(Point, '/goal_pose', lambda _m: self.core.on_goal(), 10)
-        self.create_subscription(Odometry, '/odom', lambda _m: self.core.on_odom(self._now()), 10)
+        self.create_subscription(Odometry, '/odom', lambda _m: self.core.on_odom(*self._now()), 10)
         self.create_subscription(LaserScan, '/scan', self._scan_cb, 10)
         self.create_subscription(String, '/operator_heartbeat',
-                                 lambda _m: self.core.on_heartbeat(self._now()), 10)
-        self.create_timer(1.0 / RATE_HZ, self._tick)
+                                 lambda _m: self.core.on_heartbeat(time.monotonic()), 10)
+        # steady clock: keep publishing even if sim time (/clock) stops
+        self.create_timer(1.0 / RATE_HZ, self._tick, clock=Clock(clock_type=ClockType.STEADY_TIME))
         self.get_logger().info('safety_supervisor started: /cmd_vel_nav -> /cmd_vel')
 
-    @staticmethod
-    def _now():
-        # wall-clock monotonic: the watchdogs must keep running even if sim
-        # time or a publisher stalls
-        return time.monotonic()
+    def _now(self):
+        """(wall, sim) seconds. Sim time comes from /clock (use_sim_time);
+        the core judges staleness in sim time with a wall-time backstop."""
+        return time.monotonic(), self.get_clock().now().nanoseconds * 1e-9
 
     def _nav_cb(self, msg):
-        self.core.on_nav_cmd(msg.linear.x, msg.angular.z, self._now())
+        self.core.on_nav_cmd(msg.linear.x, msg.angular.z, *self._now())
 
     def _mission_cmd_cb(self, msg):
         self.core.on_mission_cmd(msg.data.strip().lower())
 
     def _scan_cb(self, msg):
-        self.core.on_scan(msg.ranges, msg.angle_min, msg.angle_increment, self._now())
+        self.core.on_scan(msg.ranges, msg.angle_min, msg.angle_increment, *self._now())
 
     def _tick(self):
-        lin, ang, reason, clamped = self.core.output(self._now())
+        lin, ang, reason, clamped = self.core.output(*self._now())
         out = Twist()
         out.linear.x = lin
         out.angular.z = ang

@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 from safety_supervisor_core import (  # noqa: E402
     CMD_TIMEOUT_S, GUARD_MARGIN_M, LINK_TIMEOUT_S, MAX_ANGULAR, MAX_LINEAR,
-    SENSOR_TIMEOUT_S, SafetySupervisorCore,
+    SENSOR_TIMEOUT_S, WALL_BACKSTOP_S, SafetySupervisorCore,
 )
 
 N = 360
@@ -165,3 +165,41 @@ def test_estop_has_priority_over_stale_data():
     s = SafetySupervisorCore()
     s.on_mission_cmd('estop')
     assert s.output(100.0)[2] == 'estop'
+
+
+def _healthy_sim(wall, sim):
+    s = SafetySupervisorCore()
+    s.on_scan(_ranges(), A_MIN, INC, wall, sim)
+    s.on_odom(wall, sim)
+    s.on_heartbeat(wall)
+    s.on_nav_cmd(0.2, 0.0, wall, sim)
+    return s
+
+
+def test_simulation_hiccup_is_not_a_stale_command():
+    # measured with the Gazebo GUI: 0.35 s of wall time passed but only
+    # 0.15 s of sim time - the robot could not have moved further
+    s = _healthy_sim(10.0, 5.0)
+    assert s.output(10.35, 5.15)[2] == 'ok'
+
+
+def test_stale_command_measured_in_sim_time():
+    s = _healthy_sim(10.0, 5.0)
+    s.on_scan(_ranges(), A_MIN, INC, 10.4, 5.4)
+    s.on_odom(10.4, 5.4)
+    assert s.output(10.4, 5.0 + CMD_TIMEOUT_S + 0.05)[2] == 'stale_cmd'
+
+
+def test_frozen_sim_clock_still_stops_via_wall_backstop():
+    # sim time not advancing (frozen /clock): wall time still bounds the age
+    s = _healthy_sim(10.0, 5.0)
+    assert s.output(10.0 + WALL_BACKSTOP_S - 0.05, 5.0)[2] == 'ok'
+    assert s.output(10.0 + WALL_BACKSTOP_S + 0.05, 5.0)[2] == 'stale_scan'
+
+
+def test_operator_link_uses_wall_time_only():
+    s = _healthy_sim(10.0, 5.0)
+    s.on_scan(_ranges(), A_MIN, INC, 10.0 + LINK_TIMEOUT_S + 0.1, 5.0)
+    s.on_odom(10.0 + LINK_TIMEOUT_S + 0.1, 5.0)
+    s.on_nav_cmd(0.2, 0.0, 10.0 + LINK_TIMEOUT_S + 0.1, 5.0)
+    assert s.output(10.0 + LINK_TIMEOUT_S + 0.1, 5.0)[2] == 'link_lost'

@@ -18,6 +18,13 @@ import numpy as np
 CMD_TIMEOUT_S = 0.3
 SENSOR_TIMEOUT_S = 0.5
 LINK_TIMEOUT_S = 2.0
+# Command/sensor ages are judged in sim time (= wall time on a real robot):
+# with the Gazebo GUI open the whole simulation hiccups, so /scan and the
+# commands that follow it can arrive 0.3-0.57 s apart in wall time while
+# only ~0.15 s of sim time - the only time the robot can move in - passed.
+# Wall time is still checked against this looser backstop, so a frozen
+# clock or simulator still stops the robot.
+WALL_BACKSTOP_S = 1.0
 MAX_LINEAR = 0.25            # m/s
 MAX_ANGULAR = 0.5            # rad/s
 
@@ -41,17 +48,18 @@ class SafetySupervisorCore:
         self.hold = False            # after clear_estop: zero until 'resume'
         self.cancelled = False       # after cancel: zero until a new goal
         self.cmd = (0.0, 0.0)
-        self.cmd_t = None
+        self.cmd_t = None            # (wall, sim) receive times
         self.scan_t = None
         self.odom_t = None
-        self.link_t = None
+        self.link_t = None           # wall only: mission_server runs on wall time
         self.front_clear = math.inf  # free distance ahead of the body front
         self.rear_clear = math.inf
 
     # -- inputs ------------------------------------------------------------
-    def on_nav_cmd(self, linear, angular, now):
+    # `sim_now` defaults to `now` (wall time), i.e. a real robot.
+    def on_nav_cmd(self, linear, angular, now, sim_now=None):
         self.cmd = (float(linear), float(angular))
-        self.cmd_t = now
+        self.cmd_t = (now, now if sim_now is None else sim_now)
 
     def on_mission_cmd(self, cmd):
         if cmd == 'estop':
@@ -67,16 +75,16 @@ class SafetySupervisorCore:
     def on_goal(self):
         self.cancelled = False
 
-    def on_odom(self, now):
-        self.odom_t = now
+    def on_odom(self, now, sim_now=None):
+        self.odom_t = (now, now if sim_now is None else sim_now)
 
     def on_heartbeat(self, now):
         self.link_t = now
 
-    def on_scan(self, ranges, angle_min, angle_increment, now):
+    def on_scan(self, ranges, angle_min, angle_increment, now, sim_now=None):
         """Raw laser-frame ranges. Updates the free distance in front of /
         behind the robot body within its width (self-occlusion masked)."""
-        self.scan_t = now
+        self.scan_t = (now, now if sim_now is None else sim_now)
         r = np.asarray(ranges, dtype=float)
         a = angle_min + np.arange(r.size) * angle_increment
         deg = np.degrees(a)
@@ -93,24 +101,25 @@ class SafetySupervisorCore:
 
     # -- decision ----------------------------------------------------------
     @staticmethod
-    def _stale(t, now, timeout):
-        return t is None or now - t > timeout
+    def _stale(t, now, sim_now, timeout):
+        return t is None or sim_now - t[1] > timeout or now - t[0] > WALL_BACKSTOP_S
 
-    def output(self, now):
+    def output(self, now, sim_now=None):
         """Returns (linear, angular, reason, clamped). reason 'ok' = pass-through."""
+        sim_now = now if sim_now is None else sim_now
         if self.estop:
             return 0.0, 0.0, 'estop', False
         if self.hold:
             return 0.0, 0.0, 'hold_after_estop', False
         if self.cancelled:
             return 0.0, 0.0, 'cancelled', False
-        if self._stale(self.scan_t, now, SENSOR_TIMEOUT_S):
+        if self._stale(self.scan_t, now, sim_now, SENSOR_TIMEOUT_S):
             return 0.0, 0.0, 'stale_scan', False
-        if self._stale(self.odom_t, now, SENSOR_TIMEOUT_S):
+        if self._stale(self.odom_t, now, sim_now, SENSOR_TIMEOUT_S):
             return 0.0, 0.0, 'stale_odom', False
-        if self.require_operator_link and self._stale(self.link_t, now, LINK_TIMEOUT_S):
+        if self.require_operator_link and (self.link_t is None or now - self.link_t > LINK_TIMEOUT_S):
             return 0.0, 0.0, 'link_lost', False
-        if self._stale(self.cmd_t, now, CMD_TIMEOUT_S):
+        if self._stale(self.cmd_t, now, sim_now, CMD_TIMEOUT_S):
             return 0.0, 0.0, 'stale_cmd', False
 
         lin, ang = self.cmd
