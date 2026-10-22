@@ -599,6 +599,288 @@
       </link></model>
 
     <!-- ============================================================
+         ZONE F - SITE FACILITIES AND EQUIPMENT (added for site detail).
+         Every model below that has collision is also registered in
+         scripts/worker_mover.py OBSTACLES (same centre, half extents
+         + ~0.05 m), so the planner routes around it and the safety
+         zones / live map treat its LiDAR returns as known layout.
+         All collision boxes are axis-aligned and >= 0.8 m tall, above
+         the LiDAR scan plane (~0.27 m), except where noted.
+         ============================================================ -->
+
+    <!-- Site office: portable cabin in the north-west corner -->
+    <model name="site_office"><static>true</static><pose>-6.2 5.4 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 1.25 0 0 0</pose><geometry><box><size>3.0 1.4 2.5</size></box></geometry></collision>
+        <collision name="steps_col"><pose>0.8 -0.85 0.1 0 0 0</pose><geometry><box><size>0.7 0.3 0.2</size></box></geometry></collision>
+        <visual name="skid"><pose>0 0 0.075 0 0 0</pose><geometry><box><size>3.0 1.3 0.15</size></box></geometry>
+          <material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual>
+        <visual name="body"><pose>0 0 1.25 0 0 0</pose><geometry><box><size>2.96 1.36 2.2</size></box></geometry>
+          <material><ambient>0.85 0.85 0.8 1</ambient><diffuse>0.85 0.85 0.8 1</diffuse></material></visual>
+        <visual name="roof"><pose>0 0 2.42 0 0 0</pose><geometry><box><size>3.0 1.4 0.16</size></box></geometry>
+          <material><ambient>0.3 0.35 0.45 1</ambient><diffuse>0.3 0.35 0.45 1</diffuse></material></visual>
+        <visual name="door"><pose>0.8 -0.69 1.05 0 0 0</pose><geometry><box><size>0.8 0.02 1.9</size></box></geometry>
+          <material><ambient>0.3 0.35 0.45 1</ambient><diffuse>0.3 0.35 0.45 1</diffuse></material></visual>
+        <visual name="window_1"><pose>-0.6 -0.69 1.5 0 0 0</pose><geometry><box><size>0.9 0.02 0.7</size></box></geometry>
+          <material><ambient>0.25 0.4 0.55 1</ambient><diffuse>0.25 0.4 0.55 1</diffuse><specular>0.6 0.6 0.6 1</specular></material></visual>
+        <visual name="window_2"><pose>-1.49 0 1.5 0 0 0</pose><geometry><box><size>0.02 0.8 0.7</size></box></geometry>
+          <material><ambient>0.25 0.4 0.55 1</ambient><diffuse>0.25 0.4 0.55 1</diffuse><specular>0.6 0.6 0.6 1</specular></material></visual>
+        <visual name="sign"><pose>-0.6 -0.70 2.05 0 0 0</pose><geometry><box><size>1.2 0.02 0.25</size></box></geometry>
+          <material><ambient>0.95 0.75 0.05 1</ambient><diffuse>0.95 0.75 0.05 1</diffuse></material></visual>
+        <visual name="steps"><pose>0.8 -0.85 0.1 0 0 0</pose><geometry><box><size>0.7 0.3 0.2</size></box></geometry>
+          <material><ambient>0.45 0.45 0.45 1</ambient><diffuse>0.45 0.45 0.45 1</diffuse></material></visual>
+      </link></model>
+
+    <!-- Two portable toilets against the west wall -->
+    <model name="portable_toilets"><static>true</static><pose>-7.2 2.72 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 1.1 0 0 0</pose><geometry><box><size>0.9 1.9 2.2</size></box></geometry></collision>
+        <visual name="unit_1"><pose>0 -0.48 1.1 0 0 0</pose><geometry><box><size>0.9 0.9 2.2</size></box></geometry>
+          <material><ambient>0.1 0.45 0.2 1</ambient><diffuse>0.1 0.45 0.2 1</diffuse></material></visual>
+        <visual name="unit_2"><pose>0 0.48 1.1 0 0 0</pose><geometry><box><size>0.9 0.9 2.2</size></box></geometry>
+          <material><ambient>0.1 0.3 0.6 1</ambient><diffuse>0.1 0.3 0.6 1</diffuse></material></visual>
+        <visual name="roof_1"><pose>0 -0.48 2.23 0 0 0</pose><geometry><box><size>0.95 0.95 0.06</size></box></geometry>
+          <material><ambient>0.9 0.9 0.9 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material></visual>
+        <visual name="roof_2"><pose>0 0.48 2.23 0 0 0</pose><geometry><box><size>0.95 0.95 0.06</size></box></geometry>
+          <material><ambient>0.9 0.9 0.9 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material></visual>
+        <visual name="door_1"><pose>0.46 -0.48 1.0 0 0 0</pose><geometry><box><size>0.02 0.6 1.8</size></box></geometry>
+          <material><ambient>0.08 0.3 0.12 1</ambient><diffuse>0.08 0.3 0.12 1</diffuse></material></visual>
+        <visual name="door_2"><pose>0.46 0.48 1.0 0 0 0</pose><geometry><box><size>0.02 0.6 1.8</size></box></geometry>
+          <material><ambient>0.06 0.2 0.45 1</ambient><diffuse>0.06 0.2 0.45 1</diffuse></material></visual>
+      </link></model>
+
+    <!-- Concrete mixer: tilted drum on a steel frame -->
+    <model name="concrete_mixer"><static>true</static><pose>-5.5 2.0 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 0.65 0 0 0</pose><geometry><box><size>1.2 0.8 1.3</size></box></geometry></collision>
+        <visual name="frame"><pose>0 0 0.3 0 0 0</pose><geometry><box><size>1.1 0.7 0.6</size></box></geometry>
+          <material><ambient>0.85 0.4 0.05 1</ambient><diffuse>0.85 0.4 0.05 1</diffuse></material></visual>
+        <visual name="drum"><pose>0.1 0 0.9 0 1.0 0</pose><geometry><cylinder><radius>0.36</radius><length>0.7</length></cylinder></geometry>
+          <material><ambient>0.9 0.5 0.1 1</ambient><diffuse>0.9 0.5 0.1 1</diffuse></material></visual>
+        <visual name="drum_mouth"><pose>0.38 0 1.12 0 1.0 0</pose><geometry><cylinder><radius>0.2</radius><length>0.1</length></cylinder></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material></visual>
+        <visual name="wheel_l"><pose>-0.35 0.38 0.2 1.5708 0 0</pose><geometry><cylinder><radius>0.2</radius><length>0.08</length></cylinder></geometry>
+          <material><ambient>0.08 0.08 0.08 1</ambient><diffuse>0.08 0.08 0.08 1</diffuse></material></visual>
+        <visual name="wheel_r"><pose>-0.35 -0.38 0.2 1.5708 0 0</pose><geometry><cylinder><radius>0.2</radius><length>0.08</length></cylinder></geometry>
+          <material><ambient>0.08 0.08 0.08 1</ambient><diffuse>0.08 0.08 0.08 1</diffuse></material></visual>
+      </link></model>
+
+    <!-- Water tank: IBC tote in a steel cage on a pallet -->
+    <model name="water_tank"><static>true</static><pose>-5.0 3.8 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 0.55 0 0 0</pose><geometry><box><size>1.0 1.0 1.1</size></box></geometry></collision>
+        <visual name="pallet"><pose>0 0 0.07 0 0 0</pose><geometry><box><size>1.0 1.0 0.14</size></box></geometry>
+          <material><ambient>0.45 0.32 0.18 1</ambient><diffuse>0.45 0.32 0.18 1</diffuse></material></visual>
+        <visual name="tank"><pose>0 0 0.6 0 0 0</pose><geometry><box><size>0.92 0.92 0.9</size></box></geometry>
+          <material><ambient>0.85 0.88 0.9 1</ambient><diffuse>0.85 0.88 0.9 1</diffuse></material></visual>
+        <visual name="cage_top"><pose>0 0 1.07 0 0 0</pose><geometry><box><size>1.0 1.0 0.04</size></box></geometry>
+          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual>
+        <visual name="cap"><pose>0 0 1.11 0 0 0</pose><geometry><cylinder><radius>0.08</radius><length>0.05</length></cylinder></geometry>
+          <material><ambient>0.1 0.3 0.7 1</ambient><diffuse>0.1 0.3 0.7 1</diffuse></material></visual>
+      </link></model>
+
+    <!-- Formwork panel stack: deliberately close to the straight-line
+         dock -> brick_pickup route, so the planner and VFH+ have to
+         route around it -->
+    <model name="formwork_stack"><static>true</static><pose>-4.6 -2.4 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 0.4 0 0 0</pose><geometry><box><size>1.2 0.6 0.8</size></box></geometry></collision>
+        <visual name="bearers"><pose>0 0 0.05 0 0 0</pose><geometry><box><size>1.2 0.6 0.1</size></box></geometry>
+          <material><ambient>0.4 0.28 0.15 1</ambient><diffuse>0.4 0.28 0.15 1</diffuse></material></visual>
+        <visual name="panels_low"><pose>0 0 0.3 0 0 0</pose><geometry><box><size>1.18 0.58 0.4</size></box></geometry>
+          <material><ambient>0.75 0.55 0.2 1</ambient><diffuse>0.75 0.55 0.2 1</diffuse></material></visual>
+        <visual name="panels_high"><pose>0.02 0 0.65 0 0 0.04</pose><geometry><box><size>1.15 0.56 0.3</size></box></geometry>
+          <material><ambient>0.65 0.2 0.12 1</ambient><diffuse>0.65 0.2 0.12 1</diffuse></material></visual>
+      </link></model>
+
+    <!-- Generator and fuel drums in the east yard -->
+    <model name="generator"><static>true</static><pose>6.6 -1.8 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 0.5 0 0 0</pose><geometry><box><size>1.6 0.8 1.0</size></box></geometry></collision>
+        <visual name="base"><pose>0 0 0.06 0 0 0</pose><geometry><box><size>1.6 0.8 0.12</size></box></geometry>
+          <material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual>
+        <visual name="housing"><pose>0 0 0.55 0 0 0</pose><geometry><box><size>1.56 0.76 0.86</size></box></geometry>
+          <material><ambient>0.95 0.75 0.05 1</ambient><diffuse>0.95 0.75 0.05 1</diffuse></material></visual>
+        <visual name="vent"><pose>0.79 0 0.6 0 0 0</pose><geometry><box><size>0.02 0.5 0.4</size></box></geometry>
+          <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+        <visual name="exhaust"><pose>-0.5 0.2 1.1 0 0 0</pose><geometry><cylinder><radius>0.04</radius><length>0.25</length></cylinder></geometry>
+          <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual>
+      </link></model>
+    <model name="fuel_drums"><static>true</static><pose>6.9 -2.95 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 0.45 0 0 0</pose><geometry><box><size>1.2 0.6 0.9</size></box></geometry></collision>
+        <visual name="drum_1"><pose>-0.3 0 0.45 0 0 0</pose><geometry><cylinder><radius>0.29</radius><length>0.9</length></cylinder></geometry>
+          <material><ambient>0.7 0.1 0.08 1</ambient><diffuse>0.7 0.1 0.08 1</diffuse></material></visual>
+        <visual name="drum_2"><pose>0.3 0 0.45 0 0 0</pose><geometry><cylinder><radius>0.29</radius><length>0.9</length></cylinder></geometry>
+          <material><ambient>0.1 0.25 0.6 1</ambient><diffuse>0.1 0.25 0.6 1</diffuse></material></visual>
+        <visual name="band_1"><pose>-0.3 0 0.3 0 0 0</pose><geometry><cylinder><radius>0.295</radius><length>0.03</length></cylinder></geometry>
+          <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual>
+        <visual name="band_2"><pose>0.3 0 0.3 0 0 0</pose><geometry><cylinder><radius>0.295</radius><length>0.03</length></cylinder></geometry>
+          <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual>
+      </link></model>
+
+    <!-- Waste skip -->
+    <model name="skip_bin"><static>true</static><pose>5.6 -4.2 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 0.45 0 0 0</pose><geometry><box><size>2.0 1.2 0.9</size></box></geometry></collision>
+        <visual name="floor"><pose>0 0 0.05 0 0 0</pose><geometry><box><size>1.6 1.2 0.1</size></box></geometry>
+          <material><ambient>0.15 0.3 0.6 1</ambient><diffuse>0.15 0.3 0.6 1</diffuse></material></visual>
+        <visual name="side_n"><pose>0 0.57 0.45 0 0 0</pose><geometry><box><size>2.0 0.06 0.9</size></box></geometry>
+          <material><ambient>0.15 0.3 0.6 1</ambient><diffuse>0.15 0.3 0.6 1</diffuse></material></visual>
+        <visual name="side_s"><pose>0 -0.57 0.45 0 0 0</pose><geometry><box><size>2.0 0.06 0.9</size></box></geometry>
+          <material><ambient>0.15 0.3 0.6 1</ambient><diffuse>0.15 0.3 0.6 1</diffuse></material></visual>
+        <visual name="end_e"><pose>0.97 0 0.45 0 -0.35 0</pose><geometry><box><size>0.06 1.2 0.95</size></box></geometry>
+          <material><ambient>0.15 0.3 0.6 1</ambient><diffuse>0.15 0.3 0.6 1</diffuse></material></visual>
+        <visual name="end_w"><pose>-0.97 0 0.45 0 0.35 0</pose><geometry><box><size>0.06 1.2 0.95</size></box></geometry>
+          <material><ambient>0.15 0.3 0.6 1</ambient><diffuse>0.15 0.3 0.6 1</diffuse></material></visual>
+        <visual name="debris"><pose>0.1 0 0.55 0.1 0.05 0.3</pose><geometry><box><size>1.4 0.9 0.5</size></box></geometry>
+          <material><ambient>0.45 0.42 0.38 1</ambient><diffuse>0.45 0.42 0.38 1</diffuse></material></visual>
+      </link></model>
+
+    <!-- Traffic cones closing off the east side of the barrier_1 work
+         zone: thin targets (about 0.18 m wide at scan height) -->
+    <model name="traffic_cone_1"><static>true</static><pose>3.1 -2.2 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 0.25 0 0 0</pose><geometry><box><size>0.3 0.3 0.5</size></box></geometry></collision>
+        <visual name="base"><pose>0 0 0.015 0 0 0</pose><geometry><box><size>0.34 0.34 0.03</size></box></geometry>
+          <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+        <visual name="cone"><pose>0 0 0.26 0 0 0</pose><geometry><cone><radius>0.14</radius><length>0.48</length></cone></geometry>
+          <material><ambient>0.95 0.35 0.05 1</ambient><diffuse>0.95 0.35 0.05 1</diffuse></material></visual>
+        <visual name="stripe"><pose>0 0 0.32 0 0 0</pose><geometry><cylinder><radius>0.068</radius><length>0.06</length></cylinder></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual>
+      </link></model>
+    <model name="traffic_cone_2"><static>true</static><pose>3.1 -2.8 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 0.25 0 0 0</pose><geometry><box><size>0.3 0.3 0.5</size></box></geometry></collision>
+        <visual name="base"><pose>0 0 0.015 0 0 0</pose><geometry><box><size>0.34 0.34 0.03</size></box></geometry>
+          <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+        <visual name="cone"><pose>0 0 0.26 0 0 0</pose><geometry><cone><radius>0.14</radius><length>0.48</length></cone></geometry>
+          <material><ambient>0.95 0.35 0.05 1</ambient><diffuse>0.95 0.35 0.05 1</diffuse></material></visual>
+        <visual name="stripe"><pose>0 0 0.32 0 0 0</pose><geometry><cylinder><radius>0.068</radius><length>0.06</length></cylinder></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual>
+      </link></model>
+    <model name="traffic_cone_3"><static>true</static><pose>3.1 -3.4 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 0.25 0 0 0</pose><geometry><box><size>0.3 0.3 0.5</size></box></geometry></collision>
+        <visual name="base"><pose>0 0 0.015 0 0 0</pose><geometry><box><size>0.34 0.34 0.03</size></box></geometry>
+          <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+        <visual name="cone"><pose>0 0 0.26 0 0 0</pose><geometry><cone><radius>0.14</radius><length>0.48</length></cone></geometry>
+          <material><ambient>0.95 0.35 0.05 1</ambient><diffuse>0.95 0.35 0.05 1</diffuse></material></visual>
+        <visual name="stripe"><pose>0 0 0.32 0 0 0</pose><geometry><cylinder><radius>0.068</radius><length>0.06</length></cylinder></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual>
+      </link></model>
+    <model name="traffic_cone_4"><static>true</static><pose>3.1 -4.0 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 0.25 0 0 0</pose><geometry><box><size>0.3 0.3 0.5</size></box></geometry></collision>
+        <visual name="base"><pose>0 0 0.015 0 0 0</pose><geometry><box><size>0.34 0.34 0.03</size></box></geometry>
+          <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+        <visual name="cone"><pose>0 0 0.26 0 0 0</pose><geometry><cone><radius>0.14</radius><length>0.48</length></cone></geometry>
+          <material><ambient>0.95 0.35 0.05 1</ambient><diffuse>0.95 0.35 0.05 1</diffuse></material></visual>
+        <visual name="stripe"><pose>0 0 0.32 0 0 0</pose><geometry><cylinder><radius>0.068</radius><length>0.06</length></cylinder></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual>
+      </link></model>
+    <!-- Delivered material inside the building, visible through the door -->
+    <model name="delivered_bricks"><static>true</static><pose>4.2 4.6 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 0.35 0 0 0</pose><geometry><box><size>1.2 1.0 0.7</size></box></geometry></collision>
+        <visual name="pallet"><pose>0 0 0.07 0 0 0</pose><geometry><box><size>1.2 1.0 0.14</size></box></geometry>
+          <material><ambient>0.45 0.32 0.18 1</ambient><diffuse>0.45 0.32 0.18 1</diffuse></material></visual>
+        <visual name="bricks"><pose>0 0 0.42 0 0 0</pose><geometry><box><size>1.1 0.9 0.56</size></box></geometry>
+          <material><ambient>0.65 0.25 0.15 1</ambient><diffuse>0.65 0.25 0.15 1</diffuse></material></visual>
+      </link></model>
+    <model name="delivered_blocks"><static>true</static><pose>6.3 4.6 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 0.45 0 0 0</pose><geometry><box><size>1.2 1.0 0.9</size></box></geometry></collision>
+        <visual name="pallet"><pose>0 0 0.07 0 0 0</pose><geometry><box><size>1.2 1.0 0.14</size></box></geometry>
+          <material><ambient>0.45 0.32 0.18 1</ambient><diffuse>0.45 0.32 0.18 1</diffuse></material></visual>
+        <visual name="blocks"><pose>0 0 0.52 0 0 0</pose><geometry><box><size>1.1 0.9 0.76</size></box></geometry>
+          <material><ambient>0.6 0.6 0.58 1</ambient><diffuse>0.6 0.6 0.58 1</diffuse></material></visual>
+      </link></model>
+    <model name="scaffold_2"><static>true</static><pose>7.1 6.2 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 1.2 0 0 0</pose><geometry><box><size>0.7 1.3 2.4</size></box></geometry></collision>
+        <visual name="pole1"><pose>-0.3 -0.55 1.2 0 0 0</pose><geometry><cylinder><radius>0.03</radius><length>2.4</length></cylinder></geometry>
+          <material><ambient>0.55 0.45 0.3 1</ambient><diffuse>0.55 0.45 0.3 1</diffuse></material></visual>
+        <visual name="pole2"><pose>0.3 -0.55 1.2 0 0 0</pose><geometry><cylinder><radius>0.03</radius><length>2.4</length></cylinder></geometry>
+          <material><ambient>0.55 0.45 0.3 1</ambient><diffuse>0.55 0.45 0.3 1</diffuse></material></visual>
+        <visual name="pole3"><pose>-0.3 0.55 1.2 0 0 0</pose><geometry><cylinder><radius>0.03</radius><length>2.4</length></cylinder></geometry>
+          <material><ambient>0.55 0.45 0.3 1</ambient><diffuse>0.55 0.45 0.3 1</diffuse></material></visual>
+        <visual name="pole4"><pose>0.3 0.55 1.2 0 0 0</pose><geometry><cylinder><radius>0.03</radius><length>2.4</length></cylinder></geometry>
+          <material><ambient>0.55 0.45 0.3 1</ambient><diffuse>0.55 0.45 0.3 1</diffuse></material></visual>
+        <visual name="brace_low"><pose>0 -0.55 0.9 1.5708 0 0</pose><geometry><cylinder><radius>0.02</radius><length>1.1</length></cylinder></geometry>
+          <material><ambient>0.5 0.5 0.52 1</ambient><diffuse>0.5 0.5 0.52 1</diffuse></material></visual>
+        <visual name="brace_high"><pose>0 -0.55 1.8 1.5708 0 0</pose><geometry><cylinder><radius>0.02</radius><length>1.1</length></cylinder></geometry>
+          <material><ambient>0.5 0.5 0.52 1</ambient><diffuse>0.5 0.5 0.52 1</diffuse></material></visual>
+        <visual name="platform"><pose>0 0 1.25 0 0 0</pose><geometry><box><size>0.65 1.25 0.04</size></box></geometry>
+          <material><ambient>0.55 0.4 0.2 1</ambient><diffuse>0.55 0.4 0.2 1</diffuse></material></visual>
+      </link></model>
+
+    <!-- Ground markings (visual only, no collision): loading bays at the
+         stations, tyre tracks along the main haul route -->
+    <model name="bay_brick_pickup"><static>true</static><pose>-6.0 -4.5 0.013 0 0 0</pose>
+      <link name="link">
+        <visual name="n"><pose>0 0.7 0 0 0 0</pose><geometry><box><size>1.46 0.06 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+        <visual name="s"><pose>0 -0.7 0 0 0 0</pose><geometry><box><size>1.46 0.06 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+        <visual name="e"><pose>0.7 0 0 0 0 0</pose><geometry><box><size>0.06 1.46 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+        <visual name="w"><pose>-0.7 0 0 0 0 0</pose><geometry><box><size>0.06 1.46 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+      </link></model>
+    <model name="bay_block_pickup"><static>true</static><pose>-3.0 -4.5 0.013 0 0 0</pose>
+      <link name="link">
+        <visual name="n"><pose>0 0.7 0 0 0 0</pose><geometry><box><size>1.46 0.06 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+        <visual name="s"><pose>0 -0.7 0 0 0 0</pose><geometry><box><size>1.46 0.06 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+        <visual name="e"><pose>0.7 0 0 0 0 0</pose><geometry><box><size>0.06 1.46 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+        <visual name="w"><pose>-0.7 0 0 0 0 0</pose><geometry><box><size>0.06 1.46 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+      </link></model>
+    <model name="bay_building_door"><static>true</static><pose>5.2 1.25 0.013 0 0 0</pose>
+      <link name="link">
+        <visual name="n"><pose>0 0.7 0 0 0 0</pose><geometry><box><size>1.46 0.06 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+        <visual name="s"><pose>0 -0.7 0 0 0 0</pose><geometry><box><size>1.46 0.06 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+        <visual name="e"><pose>0.7 0 0 0 0 0</pose><geometry><box><size>0.06 1.46 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+        <visual name="w"><pose>-0.7 0 0 0 0 0</pose><geometry><box><size>0.06 1.46 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+      </link></model>
+    <model name="bay_scaffold"><static>true</static><pose>1.0 4.6 0.013 0 0 0</pose>
+      <link name="link">
+        <visual name="n"><pose>0 0.7 0 0 0 0</pose><geometry><box><size>1.46 0.06 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+        <visual name="s"><pose>0 -0.7 0 0 0 0</pose><geometry><box><size>1.46 0.06 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+        <visual name="e"><pose>0.7 0 0 0 0 0</pose><geometry><box><size>0.06 1.46 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+        <visual name="w"><pose>-0.7 0 0 0 0 0</pose><geometry><box><size>0.06 1.46 0.004</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual>
+      </link></model>
+    <model name="bay_dock"><static>true</static><pose>0 0 0.026 0 0 0</pose>
+      <link name="link">
+        <visual name="n"><pose>0 0.7 0 0 0 0</pose><geometry><box><size>1.46 0.06 0.004</size></box></geometry>
+          <material><ambient>0.92 0.92 0.92 1</ambient><diffuse>0.92 0.92 0.92 1</diffuse></material></visual>
+        <visual name="s"><pose>0 -0.7 0 0 0 0</pose><geometry><box><size>1.46 0.06 0.004</size></box></geometry>
+          <material><ambient>0.92 0.92 0.92 1</ambient><diffuse>0.92 0.92 0.92 1</diffuse></material></visual>
+        <visual name="e"><pose>0.7 0 0 0 0 0</pose><geometry><box><size>0.06 1.46 0.004</size></box></geometry>
+          <material><ambient>0.92 0.92 0.92 1</ambient><diffuse>0.92 0.92 0.92 1</diffuse></material></visual>
+        <visual name="w"><pose>-0.7 0 0 0 0 0</pose><geometry><box><size>0.06 1.46 0.004</size></box></geometry>
+          <material><ambient>0.92 0.92 0.92 1</ambient><diffuse>0.92 0.92 0.92 1</diffuse></material></visual>
+      </link></model>
+    <model name="tyre_tracks"><static>true</static><pose>-5.75 0 0.0125 0 0 0</pose>
+      <link name="link">
+        <visual name="t1"><pose>0 0.35 0 0 0 0</pose><geometry><box><size>3.5 0.22 0.004</size></box></geometry>
+          <material><ambient>0.3 0.27 0.23 1</ambient><diffuse>0.3 0.27 0.23 1</diffuse></material></visual>
+        <visual name="t2"><pose>0 -0.35 0 0 0 0</pose><geometry><box><size>3.5 0.22 0.004</size></box></geometry>
+          <material><ambient>0.3 0.27 0.23 1</ambient><diffuse>0.3 0.27 0.23 1</diffuse></material></visual>
+      </link></model>
+
+    <!-- ============================================================
          ZONE E - WORKERS. Two plain (non-static) models, NOT Gazebo
          actors - confirmed by direct test that this installed Gazebo
          Harmonic drops primitive visuals on actors without a skin

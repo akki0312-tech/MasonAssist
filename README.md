@@ -20,7 +20,7 @@ This is a **simulation project**. Nothing here has run on physical hardware.
 - **Recovery and failure handling** — escape and rotate-in-place recovery; if a leg makes no progress for 45 s it is re-planned, and after 2 re-plans the mission fails cleanly with a reason.
 - **Operator controls** — pause, resume, cancel, emergency stop. Clearing an e-stop leaves the robot *paused*: it never starts moving again on its own.
 - **Live dashboard** — map with site layout, live LiDAR, trajectory, planned route and stations; mission, safety, queue and history panels; click the map to send the robot somewhere.
-- **A living site** — two construction workers patrol their lanes and cross the robot's area.
+- **A living site** — two construction workers patrol their lanes and cross the robot's area. The site has material storage (bricks, blocks, cement, pipes, timber, sand), a partly built building with delivered pallets inside, scaffolding, a site office, toilets, a concrete mixer, a water tank, a generator with fuel drums, a waste skip, a formwork stack beside the brick route, traffic cones around a work zone, and loading-bay markings at each station.
 
 ---
 
@@ -232,6 +232,15 @@ Measured in simulation in this repository's VM. These are small samples — they
 | Driven straight at a box 0.44 m ahead, navigation frozen | stopped with 0.12 m between body and box (ground truth); turning was still allowed (72° in 2 s) |
 | Full missions with the supervisor in the loop | bricks_to_building complete 175.6 s (started 1.1 m from the dock), blocks_to_scaffold complete 186.1 s. During blocks, `stale_cmd` fired twice for 75 ms and 140 ms: navigation went quiet for over 0.3 s and the robot got zero until it came back |
 
+**Richer site (current world)** — after adding the site facilities and equipment (15 new obstacles, among them a formwork stack placed on the straight-line brick route), with the safety supervisor in the loop and each run from a clean restart:
+
+| Run | Result | Time (s) | Final distance to dock | Learned cells | Replans / reroutes |
+|---|---|---|---|---|---|
+| bricks_to_building ×2 | 2/2 complete | 170.7 / 169.3 | 0.29 / 0.28 m | 0 / 0 | 0 / 0 |
+| blocks_to_scaffold ×3 | 3/3 complete | 185.5 / 199.4\* / 182.7 | 0.27 / 0.28 / 0.28 m | 3 / 3 / 0 | 0 / 0 |
+
+The planner now takes the brick legs around the formwork stack (+0.46 m and +0.62 m). Five map-click goals into the new areas (west yard past the formwork, gate, beside the site office, east yard by the generator, back to dock) were all reached, each within 0.27–0.29 m by ground truth, with no false stops. The 3 learned cells in the first two blocks runs showed an **existing** registry error: `pipe_pile` is rolled 90°, so its pipes reach 0.15 m beyond its obstacle box. `rebar_bundle` and `timber_stack` had the same kind of error. All three boxes were corrected, and the third blocks run learned 0 cells. \*The 199.4 s run had an extra logging process running alongside it; the sim slows under that load and mission time is wall-clock.
+
 **Live obstacle map** — an unmapped 1.2 × 1.0 m pallet placed on the planned route to the brick pickup: the robot learned it (63 cells, all on the pallet, none elsewhere), rerouted around it 5 times across two legs with no stuck re-plans, and completed the mission in 170.2 s. After the pallet was removed, the learned cells cleared by themselves within ~6 s of the robot seeing through the space, and a full mission then completed in 148.4 s with 0 reroutes and 0 learned cells — passing workers were not learned.
 
 **Failure handling** — a goal sealed off by two temporary walls: re-planned at 46 s and 91 s, then the mission failed at 136 s with *"no progress toward goal after 2 replans"* and the robot stopped.
@@ -244,7 +253,7 @@ Measured in simulation in this repository's VM. These are small samples — they
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 python3 -m pytest src/masonassist_description/test/
 ```
-169 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the safety supervisor, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
+171 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the safety supervisor, world-vs-obstacle-registry consistency, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
 
 ---
 
@@ -270,7 +279,7 @@ start_demo.sh / stop_demo.sh            one-command demo start/stop
 src/masonassist_description/
   launch/gazebo.launch.py               simulation, bridges, robot spawn, VFH+ node, safety supervisor
   models/masonassist/model.sdf          robot model (tracks, LiDAR, odometry plugin)
-  worlds/construction_site.world        construction site with stations and workers
+  worlds/construction_site.world        construction site: stations, materials, building, facilities, workers
   scripts/
     vfh_plus_core.py                    VFH+ algorithm (ROS-free)
     vfh_plus_node.py                    ROS controller: VFH+, recovery, escape, safety gate

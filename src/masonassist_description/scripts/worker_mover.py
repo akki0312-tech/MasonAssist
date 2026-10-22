@@ -65,9 +65,9 @@ OBSTACLES = {
     'pallet_bricks': (-6, -7, 0.75, 0.65),
     'pallet_blocks': (-3, -7, 0.75, 0.65),
     'cement_bags': (0, -7, 0.75, 0.65),
-    'pipe_pile': (3, -7, 0.75, 0.65),
-    'timber_stack': (6, -7, 0.75, 0.65),
-    'rebar_bundle': (-7.2, -7, 0.5, 0.5),
+    'pipe_pile': (3, -7, 0.75, 0.85),          # rolled 90 deg: 1.6 m pipes lie along y
+    'timber_stack': (6, -7, 1.15, 0.65),       # 2.1 m timbers along x
+    'rebar_bundle': (-7.2, -7, 0.5, 0.8),      # rolled 90 deg: 1.5 m rods lie along y
     'partition_a': (0, 1.1, 1.6, 0.25),
     'partition_b': (0, -1.1, 1.6, 0.25),
     'barrier_1': (2, -3, 0.75, 0.75),
@@ -78,6 +78,22 @@ OBSTACLES = {
     'warning_sign': (4.0, 1.6, 0.35, 0.1),
     'sand_pile': (-4.5, -7, 0.65, 0.65),
     'aggregate_pile': (1.5, -7, 0.6, 0.6),
+    # Zone F - site facilities and equipment (collision size / 2 + 0.05)
+    'site_office': (-6.2, 5.35, 1.55, 0.8),      # cabin + entry steps
+    'portable_toilets': (-7.2, 2.72, 0.5, 1.0),
+    'concrete_mixer': (-5.5, 2.0, 0.65, 0.45),
+    'water_tank': (-5.0, 3.8, 0.55, 0.55),
+    'formwork_stack': (-4.6, -2.4, 0.65, 0.35),
+    'generator': (6.6, -1.8, 0.85, 0.45),
+    'fuel_drums': (6.9, -2.95, 0.65, 0.35),
+    'skip_bin': (5.6, -4.2, 1.05, 0.65),
+    'traffic_cone_1': (3.1, -2.2, 0.2, 0.2),
+    'traffic_cone_2': (3.1, -2.8, 0.2, 0.2),
+    'traffic_cone_3': (3.1, -3.4, 0.2, 0.2),
+    'traffic_cone_4': (3.1, -4.0, 0.2, 0.2),
+    'delivered_bricks': (4.2, 4.6, 0.65, 0.55),
+    'delivered_blocks': (6.3, 4.6, 0.65, 0.55),
+    'scaffold_2': (7.1, 6.2, 0.4, 0.7),
 }
 ROBOT_SPAWN = (0.0, 0.0)
 
