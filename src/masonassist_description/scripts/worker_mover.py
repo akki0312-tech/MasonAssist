@@ -79,14 +79,14 @@ OBSTACLES = {
     'sand_pile': (-4.5, -7, 0.65, 0.65),
     'aggregate_pile': (1.5, -7, 0.6, 0.6),
     # Zone F - site facilities and equipment (collision size / 2 + 0.05)
-    'site_office': (-6.2, 5.35, 1.55, 0.8),      # cabin + entry steps
+    'site_office': (-6.2, 5.3, 1.55, 0.9),       # cabin + entry steps (down to y=4.4)
     'portable_toilets': (-7.2, 2.72, 0.5, 1.0),
     'concrete_mixer': (-5.5, 2.0, 0.65, 0.45),
     'water_tank': (-5.0, 3.8, 0.55, 0.55),
     'formwork_stack': (-4.6, -2.4, 0.65, 0.35),
     'generator': (6.6, -1.8, 0.85, 0.45),
     'fuel_drums': (6.9, -2.95, 0.65, 0.35),
-    'skip_bin': (5.6, -4.2, 1.05, 0.65),
+    'skip_bin': (5.6, -4.2, 1.2, 0.65),         # end walls lean outwards
     'traffic_cone_1': (3.1, -2.2, 0.2, 0.2),
     'traffic_cone_2': (3.1, -2.8, 0.2, 0.2),
     'traffic_cone_3': (3.1, -3.4, 0.2, 0.2),
