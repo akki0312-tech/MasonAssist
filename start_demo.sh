@@ -50,6 +50,13 @@ launch() {  # launch <name> <command...>
     echo $! >> "$RUN_DIR/pgids"   # setsid child is its own group leader
 }
 
+fail() {  # a half-started stack is worse than none: stop it all
+    echo "$1"
+    echo "Stopping the partly started demo..."
+    "$WS/stop_demo.sh" > /dev/null 2>&1
+    exit 1
+}
+
 echo "[1/3] Gazebo + robot + VFH+ navigation..."
 launch sim ros2 launch masonassist_description gazebo.launch.py \
     world_file:=construction_site.world enable_vfh_plus:=true headless:=$HEADLESS
@@ -58,7 +65,7 @@ for i in $(seq 1 90); do
     sleep 1
 done
 if ! grep -q "Entity creation successful" "$RUN_DIR/sim.log"; then
-    echo "Robot did not spawn within 90 s - see $RUN_DIR/sim.log"; exit 1
+    fail "Robot did not spawn within 90 s - see $RUN_DIR/sim.log"
 fi
 sleep 3
 
@@ -72,15 +79,52 @@ for i in $(seq 1 30); do
     sleep 1
 done
 if ! curl -s -m 2 -o /dev/null -w '%{http_code}' localhost:8080/api/state | grep -q 200; then
-    echo "Dashboard backend did not come up - see $RUN_DIR/mission_server.log"; exit 1
+    fail "Dashboard backend did not come up - see $RUN_DIR/mission_server.log"
 fi
 
-N=$(ps -eo args= | grep -E '^gz sim server|^gz sim -r -s|vfh_plus_node\.py|safety_supervisor\.py|robot_state_publisher|joint_state_publisher|__node:=clock_bridge|__node:=world_service_bridge|__node:=masonassist_bridge|__node:=lidar_bridge|scan_frame_fix\.py|odom_to_tf_broadcaster\.py|worker_mover\.py|mission_server\.py' | grep -v grep | wc -l)
+# Health check after a settle time, so a node that starts and then crashes
+# (or a Gazebo GUI that exits and takes the server with it) is caught:
+# every component must still be running and data must be flowing.
+sleep 5
+COMPONENTS="gazebo-server:^gz sim server|^gz sim -r -s
+vfh_plus_node:vfh_plus_node\.py
+safety_supervisor:safety_supervisor\.py
+robot_state_publisher:robot_state_publisher
+joint_state_publisher:joint_state_publisher
+clock_bridge:__node:=clock_bridge
+world_service_bridge:__node:=world_service_bridge
+masonassist_bridge:__node:=masonassist_bridge
+lidar_bridge:__node:=lidar_bridge
+scan_frame_fix:scan_frame_fix\.py
+odom_to_tf_broadcaster:odom_to_tf_broadcaster\.py
+worker_mover:worker_mover\.py
+mission_server:mission_server\.py"
+$HEADLESS || COMPONENTS="$COMPONENTS
+gazebo-gui:gz sim gui"
+MISSING=""
+N=0
+while IFS= read -r line; do
+    if ps -eo args= | grep -v grep | grep -qE "${line#*:}"; then
+        N=$((N + 1))
+    else
+        MISSING="$MISSING ${line%%:*}"
+    fi
+done <<< "$COMPONENTS"
+[ -z "$MISSING" ] || fail "Not running after startup:$MISSING - see $RUN_DIR/*.log"
+
+DATA=$(curl -s -m 2 localhost:8080/api/state | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+gone = [k for k, v in (('odom', d['odom']), ('scan', d['scan']), ('supervisor', d['supervisor'])) if not v]
+if d['mission_status'] == 'unknown':
+    gone.append('mission_status')
+print(' '.join(gone))" 2>&1)
+[ -z "$DATA" ] || fail "No data from: $DATA - see $RUN_DIR/*.log"
+
 if $HEADLESS; then
-    echo "Running processes: $N (expected 13 - headless, no Gazebo GUI)"
+    echo "Running: all $N components (headless, no Gazebo GUI); odometry, LiDAR, supervisor and navigation status flowing"
 else
-    N=$((N + $(ps -eo args= | grep -c '[g]z sim gui')))
-    echo "Running processes: $N (expected 14 incl. Gazebo GUI)"
+    echo "Running: all $N components incl. Gazebo GUI; odometry, LiDAR, supervisor and navigation status flowing"
 fi
 echo "Dashboard: http://localhost:8080"
 echo "Stop with: ./stop_demo.sh"
