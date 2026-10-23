@@ -5,7 +5,7 @@
   <version>0.0.0</version>
   <description>MasonAssist autonomous tracked material transporter: robot model, construction-site world, VFH+ navigation, transport missions and mission-control dashboard (simulation)</description>
   <maintainer email="akkshay@todo.todo">akkshay</maintainer>
-  <license>TODO: License declaration</license>
+  <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
@@ -23,8 +23,15 @@
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>ros_gz_interfaces</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>rosgraph_msgs</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_amcl</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>python3-matplotlib</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
+  <test_depend>python3-pytest</test_depend>
   <test_depend>ament_lint_common</test_depend>
 
   <export>
