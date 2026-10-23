@@ -15,3 +15,6 @@ __pycache__/
 
 # validation run outputs - not source, grows per run
 src/masonassist_description/scripts/validation/results/
+
+# navigation evaluation outputs (tools/eval_navigation.py); the reference run lives in docs/eval/
+eval_results/

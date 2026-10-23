@@ -216,6 +216,36 @@ curl -X POST localhost:8080/api/queue -H 'Content-Type: application/json' \
 
 Measured in simulation in this repository's VM. These are small samples — they show the system working and repeatable, not statistical reliability.
 
+### Navigation evaluation (reproducible)
+
+One command runs every scenario repeatedly, each from a clean restart with the robot at the dock, and writes `runs.csv` (one row per run), a trace per run, `summary.md` and a path plot:
+
+```bash
+python3 tools/eval_navigation.py                              # default set: 11 runs, ~45 min headless
+python3 tools/eval_navigation.py --scenarios bricks --reps 1  # quick check
+python3 tools/eval_navigation.py --gui                        # with the Gazebo window (slower)
+```
+
+Output goes to `eval_results/<timestamp>/`. The reference run below is committed in [`docs/eval/`](docs/eval/) ([summary](docs/eval/summary.md), [CSV](docs/eval/runs.csv)).
+
+| Scenario | Success | Time (s) | Driven (m) | Path ratio | Min body clearance (m) | Max arrival error (m) | Reroutes | Supervisor stops |
+|---|---|---|---|---|---|---|---|---|
+| bricks_to_building | 3/3 | 151.7 ± 0.4 | 26.23 | 0.94 | 0.093 | 0.287 | 0 | 0 |
+| blocks_to_scaffold | 3/3 | 165.9 ± 1.5 | 29.42 | 0.96 | 0.218 | 0.289 | 0 | 0 |
+| custom job (map point → map point) | 2/2 | 114.2 ± 0.7 | 19.94 | 0.94 | 0.257 | 0.286 | 0 | 0 |
+| 5 chained map-click goals | 1/1 | 157.1 | 28.12 | 0.95 | 0.101 | 0.293 | 0 | 0 |
+| bricks + unmapped box dropped on the route | 2/2 | 162.0 ± 0.6 | 27.91 | 1.00 | 0.089 | 0.293 | 1 each | 0 |
+
+![Driven paths](docs/eval/paths.png)
+
+What the columns mean:
+- **Path ratio:** distance driven ÷ shortest planned route. Just under 1 is normal, since the robot cuts waypoint corners and stops within 0.35 m of each station. The debris runs drive about 6 % further for the detour.
+- **Body clearance:** the smallest gap between the robot's footprint and any obstacle's collision box. The closest pass, about 0.09 m, is the warning sign beside the building door. Its collision box is a 0.6 m-wide panel down to the ground, although the visible part at robot height is a 4 cm post.
+- **Odometry vs ground truth:** 0.000 m in every run, checked while the robot was stopped. Odometry is Gazebo's `OdometryPublisher`, so this column only becomes meaningful once odometry is made to drift (SLAM phase).
+- **Debris:** both debris runs learned the box (26 and 27 cells), rerouted once and completed.
+- **Supervisor:** it never had to override navigation in these runs.
+- **Mission times** are about 15 s shorter than the older single runs below. Those had extra per-second `gz` logging that slowed the simulator.
+
 **Repeatability** — 6 runs, each from a clean restart, robot starting at the dock, final position from Gazebo ground truth:
 
 | Mission | Result | Time (s) | Final distance to dock |
@@ -267,7 +297,7 @@ The planner now takes the brick legs around the formwork stack (+0.46 m and +0.6
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 python3 -m pytest src/masonassist_description/test/
 ```
-186 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the safety supervisor, world-vs-obstacle-registry consistency, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
+194 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the safety supervisor, world-vs-obstacle-registry consistency, the evaluation metrics, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
 
 ---
 
@@ -290,6 +320,8 @@ python3 -m pytest src/masonassist_description/test/
 
 ```
 start_demo.sh / stop_demo.sh            one-command demo start/stop
+tools/eval_navigation.py                repeatable navigation evaluation -> CSV, summary, path plot
+docs/eval/                              reference evaluation results
 src/masonassist_description/
   launch/gazebo.launch.py               simulation, bridges, robot spawn, VFH+ node, safety supervisor
   models/masonassist/model.sdf          robot model (tracks, LiDAR, odometry plugin)
@@ -307,6 +339,7 @@ src/masonassist_description/
     mission_server.py                   ROS node + HTTP API + dashboard server
     dashboard.html                      the web dashboard
     worker_mover.py                     moves the construction workers; site obstacle list
+    eval_metrics.py                     evaluation metrics: path length, clearance, arrival error (ROS-free)
     scan_frame_fix.py, odom_to_tf_broadcaster.py   LiDAR frame and TF helpers
   test/                                 pytest suite
 HANDOFF.md                              original robot geometry, TF and propulsion validation notes
