@@ -13,6 +13,7 @@ This is a **simulation project**. Nothing here has run on physical hardware.
 - **Transport missions** — multi-leg jobs such as *brick pickup → building door → dock*, with load/unload stops and payload tracking.
 - **Job queue + history** — queue several deliveries; the robot runs them back to back. A failed or cancelled job pauses the queue until the operator resumes it.
 - **Route planning** — A\* on the known site layout plans corner-safe waypoints for every leg and every map click.
+- **Payload & terrain tested** — 0–50 kg loads on concrete, gravel and clay ramps up to 35° in simulation. Up to 25 kg it's unaffected; 50 kg tips on 30–35° slopes. The drive has realistic acceleration limits, and the tracks stop by themselves if commands stop arriving.
 - **Localisation** — odometry drifts the way real track odometry does (slip on distance and turning). The robot localises with AMCL against a map of the site built with SLAM (slam_toolbox), so it stays within a few centimetres of its true position.
 - **Live obstacle map** — obstacles the LiDAR sees that are not in the site layout (debris, a new pallet) and that stay put for 4 s are learned into an occupancy grid; the robot reroutes around them immediately, and they clear again once the LiDAR sees through the empty space.
 - **Local obstacle avoidance** — a VFH+ (Vector Field Histogram Plus) controller drives between waypoints using live 360° LiDAR.
@@ -267,6 +268,38 @@ python3 tools/eval_navigation.py ... --odometry drift --localization none     # 
 python3 tools/build_map.py                                                    # rebuild the map
 ```
 
+### Payload & terrain (simulation)
+
+`tools/terrain_test.py` loads the robot with 0 / 15 / 25 / 50 kg and drives it on a test world of ramps.
+- **Payload:** a pallet of bricks fixed on the deck, `--payload=KG` in `start_demo.sh`. Its height follows its mass, so a heavier load also raises the centre of gravity.
+- **Ramps:** concrete (μ 1.0) at 10° / 20° / 30° / 35°, gravel (μ 0.6) at 10° / 20° / 30°, and wet clay (μ 0.4) at 10° / 20°, plus a 10° side slope.
+- **Driving:** commands go straight to the tracks (no navigation or supervisor), at 0.2–0.25 m/s, with the drive's 0.5 m/s² acceleration limit.
+
+Full tables: [`docs/terrain/summary.md`](docs/terrain/summary.md); data: [`results.csv`](docs/terrain/results.csv).
+
+| | 0 kg | 15 kg | 25 kg | 50 kg |
+|---|---|---|---|---|
+| Climb from level ground | 10–30° concrete, 10–20° gravel and clay | same | same | 10–20° only |
+| Hold and hill start, placed on the slope | all slopes up to 35°, no slide | same | same | **tipped over on 35°** |
+| Downhill stop from 0.25 m/s | 0.07 m; 0.10 m on 20° clay; 0.18 m on 30° gravel | same | same | 0.07 m up to 20°; **1.3 m slide on 30° gravel; tipped over on 30° and 35° concrete** |
+| Flat stop from 0.25 m/s | 0.067 m | 0.076 m | 0.065 m | 0.075 m |
+| 10° side slope | stable, no sideways drift | same | same | same |
+
+What the results show:
+- **Up to 25 kg the robot is unaffected.** It handled every slope up to 30° on concrete and up to 20° on gravel and clay, with no slip, no slide-back and 7–10 cm stopping distances.
+- **50 kg is the limit case.** The load's centre sits about 0.43 m above the ground. Braking down a 30° slope, or simply standing on 35°, tipped the robot over (pitch about 90°). On 30° gravel it slid 1.3 m before stopping.
+- **Operating limit taken from these results:** with a 50 kg load, stay on slopes of 20° or less. Empty or at 25 kg, up to 30° on concrete. The robot has no tilt sensor yet, so this is a site rule, not something it enforces itself (see Limitations).
+- **Approach corners:** climbs from level ground onto 35° concrete and 30° gravel stalled at the sharp corner where the ground meets the ramp, even empty. Placed directly on those slopes, it held and drove up. That's an approach-geometry limit, not a grip limit.
+- **This is a rough model.** It uses Coulomb friction, where weight cancels out of grip, which is why payload mostly matters through tipping. Real tracks on soil also sink and shear, and real motors have torque limits. Read these numbers as relative, not absolute.
+
+![Pitch while climbing](docs/terrain/pitch_profiles.png)
+
+```bash
+python3 tools/terrain_test.py                                   # full matrix, ~80 min
+python3 tools/terrain_test.py --payloads 0 --lanes concrete_10  # quick check
+./start_demo.sh --payload=25                                    # run the demo loaded
+```
+
 ### Navigation evaluation (reproducible)
 
 One command runs every scenario repeatedly, each from a clean restart with the robot at the dock, and writes `runs.csv` (one row per run), a trace per run, `summary.md` and a path plot:
@@ -313,7 +346,8 @@ What the columns mean:
 | Test | Result |
 |---|---|
 | Before the supervisor existed: navigation node frozen (`kill -STOP`) mid-drive | robot kept driving on its last command, **over 3 m** (x −0.49 → −3.72) |
-| Navigation node frozen | stopped in 0.34–0.38 s, moved 0.06–0.07 m (`stale_cmd` at 0.3 s) |
+| Navigation node frozen | stopped in 0.34–0.38 s, moved 0.06–0.07 m (`stale_cmd` at 0.3 s). With the 0.5 m/s² drive acceleration limit added later: 0.69 s, 0.09 m |
+| **Safety supervisor itself** frozen | before the backstop: robot kept going (0.59 m in 3 s). With the track controllers' 0.5 s command timeout: stopped in 0.62 s, moved 0.12 m |
 | LiDAR relay (`scan_frame_fix`) frozen | stopped in 0.36 s, moved 0.07 m (`stale_scan` at 0.51 s) |
 | Mission server frozen | stopped in 1.67 s, moved 0.39 m (`link_lost` once the last heartbeat was 2 s old) |
 | 1.0 m/s injected on `/cmd_vel_nav` | measured top speed 0.250 m/s |
@@ -348,19 +382,20 @@ The planner now takes the brick legs around the formwork stack (+0.46 m and +0.6
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 python3 -m pytest src/masonassist_description/test/
 ```
-203 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the safety supervisor, world-vs-obstacle-registry consistency, the evaluation metrics, drifting odometry and pose composition, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
+219 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the safety supervisor, world-vs-obstacle-registry consistency, the evaluation metrics, drifting odometry and pose composition, the payload model, the terrain world, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
 
 ---
 
 ## Limitations
 
 - **Simulation only** — no hardware testing.
+- **No tilt sensing** — the robot has no IMU, so it can't detect a dangerous slope or limit itself on one. The slope limits under *Payload & terrain* are site rules, and the 2D LiDAR sees ramps as walls.
 - **Odometry drift is modelled, not physical** — `odom_drift` adds track-odometry-style errors to the simulator's true motion. A real robot's drift will have its own character, and AMCL's noise parameters may need retuning.
 - **Two maps** — AMCL localises on the SLAM map, but route planning uses the authored layout (`worker_mover.OBSTACLES`) plus learned obstacles. They agree (99.9 % of map cells lie on known objects), but on a real site the plan would come from the SLAM map. There is no Nav2. The live map only learns objects that stay put for 4 s.
 - **Start pose is known** — AMCL starts at the dock. There is no global relocalisation if the robot is started elsewhere.
 - **"Unmapped" is not person recognition** — anything not in the layout (a person, debris, a new pallet) triggers the safety zones the same way.
 - **LiDAR self-occlusion mask** — two 9° bands where the robot's own tracks block the LiDAR are ignored. A very narrow obstacle that sits *only* inside those bands could go unseen; in that case the controller reports no data and stops rather than driving on.
-- **The emergency stop is software** — the supervisor sends zero velocity, but on a real robot the e-stop must also cut motor power in hardware. The supervisor itself runs as an ordinary ROS process; if it hangs, the TrackedVehicle plugin keeps executing its last command (measured: frozen supervisor, robot carried on at 0.2 m/s, 0.59 m in 3 s). The dashboard then shows `not running`; a real robot needs a motor-controller command timeout below this layer.
+- **The emergency stop is software** — the supervisor sends zero velocity, but on a real robot the e-stop must also cut motor power in hardware. If the supervisor itself hangs, the track controllers' 0.5 s command timeout stops the robot. Measured: stopped in 0.62 s, moved 0.12 m. A real robot needs the same timeout in its motor controllers.
 - **The collision guard is a last resort** — it only checks a straight lane the width of the body in the direction of travel, ignores the two self-occlusion bands, and has a 0.15 m margin sized for 0.25 m/s.
 - **Workers are teleported**, not physics-driven, so they can't be pushed by the robot.
 - **Queue and history are in memory** and reset when the mission server restarts.
@@ -374,11 +409,15 @@ python3 -m pytest src/masonassist_description/test/
 start_demo.sh / stop_demo.sh            one-command demo start/stop
 tools/eval_navigation.py                repeatable navigation evaluation -> CSV, summary, path plot
 tools/build_map.py                      SLAM mapping tour -> maps/construction_site.{yaml,pgm} + quality check
+tools/terrain_test.py                   payload x slope x surface test matrix -> docs/terrain/
+tools/make_terrain_world.py             generates worlds/terrain_test.world
 docs/map/, docs/localization/           map image, localisation comparison
 docs/eval/                              reference evaluation results
 src/masonassist_description/
   launch/gazebo.launch.py               simulation, bridges, robot spawn, VFH+ node, safety supervisor
-  models/masonassist/model.sdf          robot model (tracks, LiDAR, odometry plugin)
+  models/masonassist/model.sdf          robot model (tracks with acceleration limits and command timeout, LiDAR, odometry)
+  launch/terrain_test.launch.py         vehicle-only stack for terrain tests
+  worlds/terrain_test.world             ramp lanes (slope x surface) and a side slope
   worlds/construction_site.world        construction site: stations, materials, building, facilities, workers
   maps/construction_site.{yaml,pgm}     SLAM map of the site (AMCL localises on it)
   config/amcl.yaml, slam_mapping.yaml   localisation and mapping parameters
@@ -395,6 +434,7 @@ src/masonassist_description/
     mission_server.py                   ROS node + HTTP API + dashboard server
     dashboard.html                      the web dashboard
     worker_mover.py                     moves the construction workers; site obstacle list
+    payload_model.py                    loaded pallet link for the robot model (ROS-free)
     eval_metrics.py                     evaluation metrics: path length, clearance, arrival error (ROS-free)
     odom_drift_core.py / odom_drift.py  drifting track odometry from the true pose (ROS-free core + node)
     map_pose_publisher.py               /robot_pose = map->odom (AMCL) + /odom

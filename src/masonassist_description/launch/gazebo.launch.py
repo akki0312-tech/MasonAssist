@@ -1,4 +1,6 @@
 import os
+import sys
+import tempfile
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -90,6 +92,12 @@ def generate_launch_description():
     declare_map = DeclareLaunchArgument(
         'map', default_value=os.path.join(pkg_share, 'maps', 'construction_site.yaml'),
         description='saved map for localization:=amcl')
+    declare_payload = DeclareLaunchArgument(
+        'payload_kg', default_value='0',
+        description='mass of a loaded pallet fixed on the deck (0 = empty robot)')
+    declare_payload_cog = DeclareLaunchArgument(
+        'payload_cog_height', default_value='',
+        description="load centre above the deck top in m ('' = resting on its pallet)")
     declare_odometry = DeclareLaunchArgument(
         'odometry', default_value='drift',
         description="'perfect' = /odom is Gazebo's true pose; 'drift' = realistic track "
@@ -187,20 +195,33 @@ def generate_launch_description():
     # so TrackedVehicle/TrackController can never find those links. The dedicated
     # SDF model preserves base_link/left_track/right_track as separate physics links.
     # ----------------------------------------------------------------
-    spawn_robot_node = Node(
-        package='ros_gz_sim',
-        executable='create',
-        name='spawn_masonassist',
-        output='screen',
-        arguments=[
-            '-name', 'masonassist',
-            '-file', sdf_model_path,
-            '-x', LaunchConfiguration('x'),
-            '-y', LaunchConfiguration('y'),
-            '-z', LaunchConfiguration('z'),
-            '-Y', LaunchConfiguration('yaw'),
-        ],
-    )
+    # payload_kg > 0: spawn the model with a loaded pallet fixed on the deck
+    # (scripts/payload_model.py), written to a temp copy of the model.
+    def spawn_with_payload(context):
+        sys.path.insert(0, os.path.join(pkg_share, '..', '..', 'lib', 'masonassist_description'))
+        from payload_model import model_with_payload
+        mass = float(LaunchConfiguration('payload_kg').perform(context))
+        cog = LaunchConfiguration('payload_cog_height').perform(context)
+        path = sdf_model_path
+        if mass > 0:
+            fd, path = tempfile.mkstemp(prefix='masonassist_payload_', suffix='.sdf')
+            with os.fdopen(fd, 'w') as f:
+                f.write(model_with_payload(open(sdf_model_path).read(), mass, float(cog) if cog else None))
+        return [Node(
+            package='ros_gz_sim',
+            executable='create',
+            name='spawn_masonassist',
+            output='screen',
+            arguments=[
+                '-name', 'masonassist',
+                '-file', path,
+                '-x', LaunchConfiguration('x'),
+                '-y', LaunchConfiguration('y'),
+                '-z', LaunchConfiguration('z'),
+                '-Y', LaunchConfiguration('yaw'),
+            ],
+        )]
+    spawn_robot_node = OpaqueFunction(function=spawn_with_payload)
 
     # ----------------------------------------------------------------
     # Clock Bridge (Gazebo -> ROS 2)
@@ -445,6 +466,8 @@ def generate_launch_description():
         declare_headless,
         declare_require_operator_link,
         declare_odometry,
+        declare_payload,
+        declare_payload_cog,
         declare_localization,
         declare_map,
         validate_controller_selection,

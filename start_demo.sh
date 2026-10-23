@@ -12,6 +12,7 @@
 #                               none = pose is odometry; slam = build a new map
 #                               (slam_toolbox); amcl = localise on the saved map
 #   --no-workers                don't start the moving workers (used for mapping)
+#   --payload=KG                a loaded pallet of KG kg fixed on the deck (default 0)
 # Each component runs in its own process group so stop_demo.sh can kill the
 # whole tree. Logs: /tmp/masonassist_demo/*.log
 set -u
@@ -23,7 +24,7 @@ running() {
     ps -eo pid=,args= | grep -E "$PATTERN" | grep -v -E "grep|stop_demo|start_demo"
 }
 
-RESTART=false; HEADLESS=false; ODOMETRY=drift; LOCALIZATION=amcl; WORKERS=true
+RESTART=false; HEADLESS=false; ODOMETRY=drift; LOCALIZATION=amcl; WORKERS=true; PAYLOAD=0
 for arg in "$@"; do
     case "$arg" in
         --restart) RESTART=true ;;
@@ -31,6 +32,8 @@ for arg in "$@"; do
         --odometry=perfect|--odometry=drift) ODOMETRY=${arg#*=} ;;
         --localization=none|--localization=slam|--localization=amcl) LOCALIZATION=${arg#*=} ;;
         --no-workers) WORKERS=false ;;
+        --payload=*) PAYLOAD=${arg#*=}
+                     [[ $PAYLOAD =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "bad --payload: $PAYLOAD"; exit 2; } ;;
         *) echo "unknown option: $arg"; exit 2 ;;
     esac
 done
@@ -70,7 +73,7 @@ fail() {  # a half-started stack is worse than none: stop it all
 echo "[1/3] Gazebo + robot + VFH+ navigation..."
 launch sim ros2 launch masonassist_description gazebo.launch.py \
     world_file:=construction_site.world enable_vfh_plus:=true headless:=$HEADLESS \
-    odometry:=$ODOMETRY localization:=$LOCALIZATION
+    odometry:=$ODOMETRY localization:=$LOCALIZATION payload_kg:=$PAYLOAD
 for i in $(seq 1 90); do
     grep -q "Entity creation successful" "$RUN_DIR/sim.log" 2>/dev/null && break
     sleep 1
@@ -151,9 +154,9 @@ print(' '.join(gone))" 2>&1)
 [ -z "$DATA" ] || fail "No data from: $DATA - see $RUN_DIR/*.log"
 
 if $HEADLESS; then
-    echo "Running: all $N components (headless, no Gazebo GUI, odometry=$ODOMETRY, localization=$LOCALIZATION); odometry, LiDAR, supervisor and navigation status flowing"
+    echo "Running: all $N components (headless, no Gazebo GUI, odometry=$ODOMETRY, localization=$LOCALIZATION, payload=${PAYLOAD} kg); odometry, LiDAR, supervisor and navigation status flowing"
 else
-    echo "Running: all $N components incl. Gazebo GUI (odometry=$ODOMETRY, localization=$LOCALIZATION); odometry, LiDAR, supervisor and navigation status flowing"
+    echo "Running: all $N components incl. Gazebo GUI (odometry=$ODOMETRY, localization=$LOCALIZATION, payload=${PAYLOAD} kg); odometry, LiDAR, supervisor and navigation status flowing"
 fi
 echo "Dashboard: http://localhost:8080"
 echo "Stop with: ./stop_demo.sh"

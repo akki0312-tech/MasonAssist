@@ -300,6 +300,19 @@
       <right_track><link>right_track</link></right_track>
       <tracks_separation>0.6555</tracks_separation>
       <steering_efficiency>0.5</steering_efficiency>
+      <!-- Drive acceleration limits. Without them the tracks change speed
+           instantly and the robot stopped from 0.25 m/s in under 2 cm -
+           no real geared track drive does that. 0.5 m/s^2 and 1.0 rad/s^2
+           (both ways) are typical for a 100-150 kg tracked carrier:
+           about 6 cm to stop from 0.25 m/s. -->
+      <linear_velocity>
+        <min_acceleration>-0.5</min_acceleration>
+        <max_acceleration>0.5</max_acceleration>
+      </linear_velocity>
+      <angular_velocity>
+        <min_acceleration>-1.0</min_acceleration>
+        <max_acceleration>1.0</max_acceleration>
+      </angular_velocity>
     </plugin>
 
     <plugin name="gz::sim::systems::TrackController" filename="gz-sim-track-controller-system">
@@ -307,6 +320,9 @@
       <track_orientation>0 0 0</track_orientation>
       <min_velocity>-1.0</min_velocity>
       <max_velocity>1.0</max_velocity>
+      <!-- backstop below the safety supervisor: stop the track if no
+           command has arrived for 0.5 s -->
+      <max_command_age>0.5</max_command_age>
     </plugin>
 
     <!-- Odometry source for /odom. TrackedVehicle's own odometry (still
@@ -314,12 +330,13 @@
          dead-reckoned from commanded track speeds and ignores real slip:
          measured against Gazebo ground truth after ~80 s of skid-steer
          turning/recovery it was off by ~1.7 m and ~35 deg, which made
-         VFH+ steer from a wrong pose. OdometryPublisher derives odometry
-         from the model's actual simulated motion. In simulation this is
-         effectively perfect odometry - real hardware would need proper
-         localization instead. -->
+         VFH+ steer from a wrong pose. OdometryPublisher reports the
+         model's actual simulated motion: it is bridged as
+         /ground_truth/odom, which odom_drift turns into a realistically
+         drifting /odom (localisation corrects it). 3 dimensions, so the
+         ground truth also carries height, pitch and roll (terrain tests). -->
     <plugin name="gz::sim::systems::OdometryPublisher" filename="gz-sim-odometry-publisher-system">
-      <dimensions>2</dimensions>
+      <dimensions>3</dimensions>
       <odom_frame>odom</odom_frame>
       <robot_base_frame>base_footprint</robot_base_frame>
       <odom_publish_frequency>30</odom_publish_frequency>
@@ -332,6 +349,9 @@
       <track_orientation>0 0 0</track_orientation>
       <min_velocity>-1.0</min_velocity>
       <max_velocity>1.0</max_velocity>
+      <!-- backstop below the safety supervisor: stop the track if no
+           command has arrived for 0.5 s -->
+      <max_command_age>0.5</max_command_age>
     </plugin>
 
   </model>

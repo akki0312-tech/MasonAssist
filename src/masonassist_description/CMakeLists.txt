@@ -56,5 +56,6 @@ install(
     scripts/vfh_plus_core.py
     scripts/safety_supervisor_core.py
     scripts/odom_drift_core.py
+    scripts/payload_model.py
   DESTINATION lib/${PROJECT_NAME}
 )

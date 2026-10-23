@@ -204,9 +204,9 @@ class Recorder:
             self.gt_dev = max(self.gt_dev, math.hypot(gt[0] - before[0], gt[1] - before[1]))
 
 
-def restart(gui, odometry, localization):
+def restart(gui, odometry, localization, payload):
     args = [os.path.join(WS, 'start_demo.sh'), '--restart', f'--odometry={odometry}',
-            f'--localization={localization}'] + ([] if gui else ['--headless'])
+            f'--localization={localization}', f'--payload={payload:g}'] + ([] if gui else ['--headless'])
     r = subprocess.run(args, capture_output=True, text=True, timeout=300)
     return r.returncode == 0, r.stdout.strip().splitlines()[-3:]
 
@@ -437,6 +437,7 @@ def main():
                     help='odometry the robot uses (start_demo.sh --odometry)')
     ap.add_argument('--localization', choices=['none', 'amcl'], default='amcl',
                     help='localisation (start_demo.sh --localization)')
+    ap.add_argument('--payload', type=float, default=0.0, help='kg on the deck (start_demo.sh --payload)')
     ap.add_argument('--out', help='output directory (default eval_results/<timestamp>)')
     args = ap.parse_args()
     names = [n.strip() for n in args.scenarios.split(',') if n.strip()]
@@ -458,7 +459,7 @@ def main():
     plan = [(n, k + 1) for n in names for k in range(args.reps or SCENARIOS[n][0])]
     for i, (name, rep) in enumerate(plan, 1):
         print(f'[{i}/{len(plan)}] {name} #{rep}: restarting simulation...', flush=True)
-        ok, tail = restart(args.gui, args.odometry, args.localization)
+        ok, tail = restart(args.gui, args.odometry, args.localization, args.payload)
         rec.reset()
         t_wait = time.monotonic()
         while ok and (rec.pose is None or rec.sim is None) and time.monotonic() - t_wait < 30:
@@ -496,7 +497,7 @@ def main():
             w.writeheader()
             w.writerows(rows)
 
-    print('\n' + write_summary(out, rows, started, args.gui, f'odometry={args.odometry}, localization={args.localization}'))
+    print('\n' + write_summary(out, rows, started, args.gui, f'odometry={args.odometry}, localization={args.localization}, payload={args.payload:g} kg'))
     plot_paths(out, rows, traces)
     print(f'\nResults: {out}')
     os._exit(0)
