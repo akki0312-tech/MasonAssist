@@ -84,6 +84,41 @@ def validate_goal(x, y):
     return None
 
 
+MIN_JOB_SEPARATION_M = 0.5  # custom job: pick-up and drop-off must differ
+
+
+def custom_job_spec(pickup, dropoff, planner=None):
+    """Operator-defined job: load at `pickup`, unload at `dropoff`, return to
+    the dock. Each is a STATIONS name or an (x, y) point. Returns
+    (spec, points, label) for TransportMission / JobQueue; raises ValueError
+    with the reason if the job cannot be run."""
+    points = {}
+    ends = []
+    for role, shown, where in (('pickup', 'pick-up', pickup), ('drop_off', 'drop-off', dropoff)):
+        if isinstance(where, str):
+            if where not in STATIONS:
+                raise ValueError(f'unknown station {where!r}')
+            ends.append((where, STATIONS[where][:2], where.replace('_', ' ')))
+        else:
+            x, y = float(where[0]), float(where[1])
+            error = validate_goal(x, y)
+            if error:
+                raise ValueError(f'{shown} {error}')
+            points[role] = (x, y)
+            ends.append((role, (x, y), f'({x:.1f}, {y:.1f})'))
+    (p_name, p_xy, p_label), (d_name, d_xy, d_label) = ends
+    if math.hypot(p_xy[0] - d_xy[0], p_xy[1] - d_xy[1]) < MIN_JOB_SEPARATION_M:
+        raise ValueError('pick-up and drop-off are the same place')
+    if planner is not None:
+        if planner.plan(p_xy, d_xy) is None:
+            raise ValueError(f'no route from pick-up {p_label} to drop-off {d_label}')
+        if planner.plan(d_xy, STATIONS['dock'][:2]) is None:
+            raise ValueError(f'no route from drop-off {d_label} back to the dock')
+    spec = {'material': 'materials',
+            'legs': [(p_name, 'load'), (d_name, 'unload'), ('dock', 'travel')]}
+    return spec, points, f'custom: {p_label} → {d_label}'
+
+
 def validate_stations():
     bad = {name: round(station_clearance(x, y), 3)
            for name, (x, y, _) in STATIONS.items()

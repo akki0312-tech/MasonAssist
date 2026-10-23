@@ -88,3 +88,18 @@ def test_to_dict_timings():
     q.finish(a, 'complete', None, 1, 40.0)
     h = q.to_dict(99.0)['history'][0]
     assert h['status'] == 'complete' and h['elapsed_s'] == 25.0 and h['replans'] == 1
+
+
+def test_custom_job_keeps_spec_points_and_label():
+    from transport_mission import custom_job_spec
+    spec, points, label = custom_job_spec((4.5, -1.5), 'scaffold')
+    q = JobQueue()
+    job = q.add('custom', 0.0, spec=spec, points=points, label=label)
+    assert job.spec is spec and job.points == {'pickup': (4.5, -1.5)}
+    assert q.to_dict(1.0)['queued'][0]['label'] == 'custom: (4.5, -1.5) → scaffold'
+    assert q.add('bricks_to_building', 0.0).to_dict(0.0)['label'] == 'bricks_to_building'
+
+
+def test_custom_without_spec_rejected():
+    with pytest.raises(ValueError):
+        JobQueue().add('custom', 0.0)

@@ -154,7 +154,7 @@ Click anywhere on the map to send the robot there. Points outside the site or in
 - **Safety supervisor** — `OK`, or why it's holding the robot (e-stop, hold, cancelled, stale LiDAR/odometry, operator link lost, obstacle at body), and whether speed is being clamped. `not running` if its status stops arriving.
 - **Velocity** — what navigation asked for (`/cmd_vel_nav`) next to what was sent to the robot (`/cmd_vel`).
 - **Safety** — `CLEAR`, `SLOW (distance)`, `STOP - yielding (distance)`, and how many unmapped returns are visible.
-- **Transport Missions** — `+ Queue …` buttons, the running job, waiting jobs (✕ to remove), Pause/Resume queue, Clear queue, and the current mission's legs, payload and elapsed time.
+- **Transport Missions** — `+ Queue …` buttons for the two fixed jobs, plus a **Custom job**: pick a pick-up and a drop-off from the station lists, or choose *point on map…* and click the map (a P / D marker shows the point), then **+ Queue custom job**. The robot loads at the pick-up, unloads at the drop-off and returns to the dock. A job is rejected with the reason if a point is outside the site, inside an obstacle or unreachable, or if pick-up and drop-off are the same place. Also: the running job, waiting jobs (✕ to remove), Pause/Resume queue, Clear queue, and the current mission's legs, payload and elapsed time.
 - **Job History** — every finished job with result, run time, re-plans and failure reason.
 - **Mission Controls** — Pause / Resume / Cancel Mission / Emergency Stop / Clear E-Stop.
 
@@ -177,6 +177,7 @@ All endpoints are on `http://localhost:8080`.
 | GET | `/api/layout` | | known obstacle boxes |
 | GET | `/api/stations` | | stations and predefined missions |
 | POST | `/api/queue` | `{"action":"add","mission":"bricks_to_building"}` | also `remove` (`id`), `clear`, `pause`, `resume`; 400 on bad input |
+| POST | `/api/queue` | `{"action":"add","mission":"custom","pickup":"block_pickup","dropoff":{"x":-5.5,"y":-1.0}}` | custom job; `pickup` / `dropoff` = station name or `{"x","y"}`; 400 with the reason if it can't be run |
 | POST | `/api/mission` | `{"mission":"blocks_to_scaffold"}` | start immediately; 409 if a mission is active |
 | POST | `/api/goal` | `{"x":-3.0,"y":-3.0}` | planned trip to a point; 400 if outside the site or inside an obstacle |
 | POST | `/api/cmd` | `{"cmd":"estop"}` | `pause`, `resume`, `cancel`, `estop`, `clear_estop`, `clear_map` (forget learned obstacles) |
@@ -185,6 +186,12 @@ Example:
 ```bash
 curl -X POST localhost:8080/api/queue -H 'Content-Type: application/json' \
      -d '{"action":"add","mission":"bricks_to_building"}'
+```
+
+Custom job from a point to a station:
+```bash
+curl -X POST localhost:8080/api/queue -H 'Content-Type: application/json' \
+     -d '{"action":"add","mission":"custom","pickup":{"x":4.5,"y":-1.5},"dropoff":"scaffold"}'
 ```
 
 ## ROS interfaces
@@ -248,6 +255,8 @@ The planner now takes the brick legs around the formwork stack (+0.46 m and +0.6
 
 **Live obstacle map** — an unmapped 1.2 × 1.0 m pallet placed on the planned route to the brick pickup: the robot learned it (63 cells, all on the pallet, none elsewhere), rerouted around it 5 times across two legs with no stuck re-plans, and completed the mission in 170.2 s. After the pallet was removed, the learned cells cleared by themselves within ~6 s of the robot seeing through the space, and a full mission then completed in 148.4 s with 0 reroutes and 0 learned cells — passing workers were not learned.
 
+**Custom jobs** — three custom jobs queued back to back all completed, each going load → carrying → unload → back to the dock: station → station (`block_pickup` → `building_door`, 135.4 s), map point → map point ((4.5, −1.5) → (−5.5, −1.0), 119.4 s) and map point → station ((−3.7, 4.5) → `scaffold`, 124.2 s). Each ended 0.27–0.30 m from the dock, with 0 replans and 0 learned cells. Rejected with reasons: a point inside the site office, a point outside the site, an unknown station, pick-up = drop-off, and a drop-off inside the building that the planner can't reach through the door.
+
 **Failure handling** — a goal sealed off by two temporary walls: re-planned at 46 s and 91 s, then the mission failed at 136 s with *"no progress toward goal after 2 replans"* and the robot stopped.
 
 **Fixes found by measuring** — the TrackedVehicle plugin's own odometry drifted ~1.7 m / 35° after a minute of skid-steer turning (now replaced by `OdometryPublisher`); simulation speed went from 0.57× to 0.81× real time with the GUI and 0.99× headless after removing per-tick CLI process launches.
@@ -258,7 +267,7 @@ The planner now takes the brick legs around the formwork stack (+0.46 m and +0.6
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 python3 -m pytest src/masonassist_description/test/
 ```
-176 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the safety supervisor, world-vs-obstacle-registry consistency, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
+186 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the safety supervisor, world-vs-obstacle-registry consistency, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
 
 ---
 

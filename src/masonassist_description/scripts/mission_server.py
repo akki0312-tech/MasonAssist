@@ -30,7 +30,9 @@ from std_msgs.msg import String
 # keeping a second, driftable copy of the same coordinates.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from worker_mover import OBSTACLES  # noqa: E402
-from transport_mission import MISSIONS, STATIONS, TransportMission, validate_goal  # noqa: E402
+from transport_mission import (  # noqa: E402
+    MISSIONS, STATIONS, TransportMission, custom_job_spec, validate_goal,
+)
 from site_planner import SitePlanner  # noqa: E402
 from job_queue import JobQueue  # noqa: E402
 from live_map import LiveMap  # noqa: E402
@@ -200,7 +202,7 @@ class MissionServerNode(Node):
         reason = m.abort_reason if m is not None else 'mission lost'
         self.queue.finish(job, status, reason, m.replans if m is not None else 0, now)
         self.job_mission = None
-        self.get_logger().info(f'job #{job.id} {job.mission}: {status}' + (f' ({reason})' if reason else ''))
+        self.get_logger().info(f'job #{job.id} {job.label}: {status}' + (f' ({reason})' if reason else ''))
 
     def _start_next_job(self, now):
         """Call with self.lock held. Starts the next queued job if the robot
@@ -212,7 +214,7 @@ class MissionServerNode(Node):
             return None
         odom = self.state['odom']
         start = (odom['x'], odom['y']) if odom else None
-        m = TransportMission(job.mission, now, start, self.planner)
+        m = TransportMission(job.mission, now, start, self.planner, spec=job.spec, points=job.points)
         self.queue.mark_started(job, now)
         self.mission = m
         self.job_mission = m
@@ -221,7 +223,7 @@ class MissionServerNode(Node):
             self.queue.finish(job, 'failed', m.abort_reason, 0, now)
             self.job_mission = None
             return None
-        self.get_logger().info(f'job #{job.id} started: {job.mission}')
+        self.get_logger().info(f'job #{job.id} started: {job.label}')
         return goal
 
     def queue_action(self, data):
@@ -230,6 +232,13 @@ class MissionServerNode(Node):
         now = self._now()
         with self.lock:
             try:
+                if action == 'add' and data.get('mission') == 'custom':
+                    # pickup / dropoff: a station name or {"x": .., "y": ..}
+                    ends = [v if isinstance(v, str) else (float(v['x']), float(v['y']))
+                            for v in (data.get('pickup'), data.get('dropoff'))]
+                    spec, points, label = custom_job_spec(*ends, planner=self.planner)
+                    job = self.queue.add('custom', now, spec=spec, points=points, label=label)
+                    return 200, f'job #{job.id} queued: {label}'
                 if action == 'add':
                     job = self.queue.add(str(data.get('mission', '')), now)
                     return 200, f'job #{job.id} queued'
@@ -245,7 +254,9 @@ class MissionServerNode(Node):
                 if action == 'resume':
                     self.queue.resume()
                     return 200, 'queue resumed'
-            except (ValueError, TypeError) as ex:
+            except (KeyError, ValueError, TypeError) as ex:
+                if isinstance(ex, (KeyError, TypeError)) and data.get('mission') == 'custom':
+                    return 400, 'custom job needs pickup and dropoff: a station name or {"x": .., "y": ..}'
                 return 400, str(ex)
         return 400, 'expected action: add|remove|clear|pause|resume'
 

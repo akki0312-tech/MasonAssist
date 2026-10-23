@@ -68,6 +68,9 @@
   .legs li.active { color:#fff; font-weight:700; }
   .mission-err { color:#ff6b6b; font-size:11px; min-height:14px; }
   .btn-queue { background:#3a4252; font-size:12px; }
+  .custom-job { border-top:1px solid #3a4252; margin-top:6px; padding-top:6px; }
+  .custom-job select { background:#1c2230; color:#fff; border:1px solid #3a4252; border-radius:4px;
+                       padding:2px 4px; font-size:12px; max-width:55%; }
   .queue-banner { background:#5a2a1a; color:#ffcfb8; border-radius:6px; padding:6px 8px; font-size:12px; margin:4px 0; }
   .job-remove { color:#ff8a8a; text-decoration:none; margin-left:4px; }
   .legs li.job-complete { color:#5fd38a; }
@@ -124,12 +127,20 @@
     <div class="card">
       <h3>Navigation</h3>
       <div class="kv"><span class="k">Current goal</span><span class="v" id="goal">none</span></div>
-      <div class="hint">Click anywhere on the map to set a new destination.</div>
+      <div class="hint">Click anywhere on the map to set a new destination (unless you are choosing a custom-job point).</div>
     </div>
 
     <div class="card">
       <h3>Transport Missions</h3>
       <div id="missionButtons"></div>
+      <div class="custom-job">
+        <div class="kv"><span class="k">Custom job - pick up at</span>
+          <select id="customPick" onchange="customChanged('pick')"></select></div>
+        <div class="kv"><span class="k">drop off at</span>
+          <select id="customDrop" onchange="customChanged('drop')"></select></div>
+        <button class="btn-mission" onclick="queueCustom()">+ Queue custom job (load → unload → dock)</button>
+        <div class="hint" id="customHint">Choose stations, or "point on map…" and then click the map.</div>
+      </div>
       <div class="mission-err" id="missionErr"></div>
       <div class="queue-banner" id="queueBanner" style="display:none"></div>
       <div class="kv"><span class="k">Running job</span><span class="v" id="queueCurrent">none</span></div>
@@ -231,6 +242,7 @@ async function loadStations() {
       b.onclick = () => queueAction({action: 'add', mission: m.name});
       box.appendChild(b);
     }
+    fillCustomSelects();
   } catch (e) {
     stations = [];
   }
@@ -252,6 +264,56 @@ async function queueAction(body) {
 
 const label = (name) => name.replace(/_/g, ' ');
 
+// ---- custom pick-up / drop-off job -------------------------------------
+const MAP_POINT = '__map';
+let customPoints = {pick: null, drop: null};   // {x, y} chosen on the map
+let pickArmed = null;                          // 'pick' | 'drop' while waiting for a map click
+const roleName = (which) => which === 'pick' ? 'pick-up' : 'drop-off';
+const customSelect = (which) => document.getElementById(which === 'pick' ? 'customPick' : 'customDrop');
+
+function fillCustomSelects() {
+  for (const which of ['pick', 'drop']) {
+    const sel = customSelect(which);
+    sel.innerHTML = '';
+    for (const s of stations) sel.add(new Option(label(s.name), s.name));
+    sel.add(new Option('point on map…', MAP_POINT));
+    const prefer = stations.find(s => s.kind === (which === 'pick' ? 'storage' : 'delivery'));
+    if (prefer) sel.value = prefer.name;
+  }
+  updateCustomHint();
+}
+
+function customChanged(which) {
+  customPoints[which] = null;
+  pickArmed = customSelect(which).value === MAP_POINT ? which : (pickArmed === which ? null : pickArmed);
+  updateCustomHint();
+}
+
+function customEnd(which) {
+  const v = customSelect(which).value;
+  return v === MAP_POINT ? customPoints[which] : v;
+}
+
+function updateCustomHint() {
+  const el = document.getElementById('customHint');
+  if (pickArmed) { el.textContent = `Click the map to set the ${roleName(pickArmed)} point.`; return; }
+  const show = (which) => {
+    const e = customEnd(which);
+    return e === null ? '(not set)' : (typeof e === 'string' ? label(e) : `(${e.x.toFixed(1)}, ${e.y.toFixed(1)})`);
+  };
+  el.textContent = `Pick-up: ${show('pick')} → drop-off: ${show('drop')} → back to dock.`;
+}
+
+function queueCustom() {
+  const p = customEnd('pick'), d = customEnd('drop');
+  const missing = [['pick', p], ['drop', d]].filter(([, e]) => e === null).map(([w]) => roleName(w));
+  if (missing.length) {
+    document.getElementById('missionErr').textContent = `choose the ${missing.join(' and ')} point on the map first`;
+    return;
+  }
+  queueAction({action: 'add', mission: 'custom', pickup: p, dropoff: d});
+}
+
 function renderQueue() {
   const q = latestState.queue;
   if (!q) return;
@@ -265,7 +327,7 @@ function renderQueue() {
   if (!q.queued.length) list.innerHTML = '<li>no jobs waiting</li>';
   for (const j of q.queued) {
     const li = document.createElement('li');
-    li.textContent = `#${j.id} ${label(j.mission)} - waiting ${j.wait_s.toFixed(0)} s `;
+    li.textContent = `#${j.id} ${label(j.label || j.mission)} - waiting ${j.wait_s.toFixed(0)} s `;
     const x = document.createElement('a');
     x.textContent = '✕'; x.href = '#'; x.className = 'job-remove';
     x.onclick = (ev) => { ev.preventDefault(); queueAction({action: 'remove', id: j.id}); };
@@ -273,7 +335,7 @@ function renderQueue() {
     list.appendChild(li);
   }
   document.getElementById('queueCurrent').textContent =
-    q.current ? `#${q.current.id} ${label(q.current.mission)} (${q.current.elapsed_s.toFixed(0)} s)` : 'none';
+    q.current ? `#${q.current.id} ${label(q.current.label || q.current.mission)} (${q.current.elapsed_s.toFixed(0)} s)` : 'none';
 
   const hist = document.getElementById('jobHistory');
   hist.innerHTML = '';
@@ -281,7 +343,7 @@ function renderQueue() {
   for (const j of q.history) {
     const li = document.createElement('li');
     li.className = 'job-' + j.status;
-    let text = `#${j.id} ${label(j.mission)} - ${j.status}`;
+    let text = `#${j.id} ${label(j.label || j.mission)} - ${j.status}`;
     if (j.elapsed_s !== null) text += ` in ${j.elapsed_s.toFixed(0)} s`;
     if (j.replans) text += `, ${j.replans} replans`;
     if (j.reason) text += ` (${j.reason})`;
@@ -305,7 +367,9 @@ function renderMission() {
     legsEl.innerHTML = '';
     return;
   }
-  let phase = `${m.name} / ${m.phase}`;
+  const q = latestState.queue;
+  const name = m.name === 'custom' && q && q.current ? q.current.label : m.name;
+  let phase = `${name} / ${m.phase}`;
   if (m.abort_reason) phase += ` (${m.abort_reason})`;
   if (m.replans) phase += ` - replans: ${m.replans}`;
   if (m.reroutes) phase += ` - rerouted around learned obstacles: ${m.reroutes}`;
@@ -320,7 +384,9 @@ function renderMission() {
     const done = i < m.leg_index || m.phase === 'complete';
     const active = i === m.leg_index && missionActive();
     li.className = done ? 'done' : (active ? 'active' : '');
-    li.textContent = `${done ? '✓' : (active ? '▶' : '·')} ${leg.action} @ ${leg.station}`;
+    const where = stations.some(s => s.name === leg.station) ? leg.station
+      : `${leg.station.replace('_', '-')} (${leg.x.toFixed(1)}, ${leg.y.toFixed(1)})`;
+    li.textContent = `${done ? '✓' : (active ? '▶' : '·')} ${leg.action} @ ${where}`;
     legsEl.appendChild(li);
   });
 }
@@ -402,6 +468,19 @@ function draw() {
     ctx.fillStyle = s.kind === 'storage' ? '#c98a3a' : (s.kind === 'delivery' ? '#5fd38a' : '#9aa4b5');
     ctx.fillRect(sx - 6, sy - 6, 12, 12);
     ctx.fillText(s.name, sx + 9, sy + 4);
+  }
+
+  // custom job points chosen on the map: P = pick-up, D = drop-off
+  for (const [which, letter, colour] of [['pick', 'P', '#c98a3a'], ['drop', 'D', '#5fd38a']]) {
+    const p = customSelect(which).value === MAP_POINT ? customPoints[which] : null;
+    if (!p) continue;
+    const [px, py] = worldToPx(p.x, p.y);
+    ctx.fillStyle = colour;
+    ctx.beginPath(); ctx.arc(px, py, 8, 0, 2 * Math.PI); ctx.fill();
+    ctx.fillStyle = '#10141c';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText(letter, px - 4, py + 4);
+    ctx.font = '11px sans-serif';
   }
 
   // planned route (A* over the known site layout) for the active mission leg
@@ -486,6 +565,13 @@ canvas.addEventListener('click', async (ev) => {
   const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
   const px = (ev.clientX - rect.left) * scaleX, py = (ev.clientY - rect.top) * scaleY;
   const [wx, wy] = pxToWorld(px, py);
+  if (pickArmed) {   // choosing a custom-job point, not sending the robot
+    customPoints[pickArmed] = {x: Math.round(wx * 10) / 10, y: Math.round(wy * 10) / 10};
+    pickArmed = null;
+    updateCustomHint();
+    draw();
+    return;
+  }
   if (missionActive() && latestState.mission.name !== 'goto' &&
       !confirm('A transport mission is running. Abort it and drive to this point instead?')) return;
   const err = document.getElementById('missionErr');

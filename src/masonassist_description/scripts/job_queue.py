@@ -18,9 +18,12 @@ HISTORY_MAX = 50
 
 class Job:
 
-    def __init__(self, job_id, mission, now):
+    def __init__(self, job_id, mission, now, spec=None, points=None, label=None):
         self.id = job_id
         self.mission = mission
+        self.spec = spec             # custom jobs: legs/material (else MISSIONS[mission])
+        self.points = points
+        self.label = label or mission
         self.status = 'queued'
         self.queued_at = now
         self.started_at = None
@@ -34,6 +37,7 @@ class Job:
         return {
             'id': self.id,
             'mission': self.mission,
+            'label': self.label,
             'status': self.status,
             'reason': self.reason,
             'replans': self.replans,
@@ -52,10 +56,11 @@ class JobQueue:
         self.paused = False
         self.pause_reason = None
 
-    def add(self, mission, now):
-        if mission not in MISSIONS:
+    def add(self, mission, now, spec=None, points=None, label=None):
+        """A MISSIONS name, or 'custom' with a spec (transport_mission.custom_job_spec)."""
+        if spec is None and mission not in MISSIONS:
             raise ValueError(f'unknown mission {mission!r}')
-        job = Job(self._next_id, mission, now)
+        job = Job(self._next_id, mission, now, spec, points, label)
         self._next_id += 1
         self.queued.append(job)
         return job

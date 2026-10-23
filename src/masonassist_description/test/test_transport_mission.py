@@ -209,3 +209,73 @@ def test_learned_obstacle_on_route_triggers_reroute_with_min_gap():
         assert REROUTE_MIN_GAP_S > 2 * ROUTE_CHECK_S
     finally:
         p.set_dynamic(None)
+
+
+# ---------------------------------------------------------------------------
+# custom (operator-defined) pick-up / drop-off jobs
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+from transport_mission import custom_job_spec  # noqa: E402
+
+
+def _run_custom(spec, points, pick_xy, drop_xy):
+    """Drive a custom job through load, unload and dock; return payload trail."""
+    m = TransportMission('custom', now=0.0, spec=spec, points=points)
+    trail = [m.payload]
+    assert m.current_goal() == pick_xy
+    m.update(10.0, pick_xy, 'reached')
+    assert m.phase == 'loading'
+    assert m.update(10.0 + DWELL_S + 0.1, pick_xy, 'reached') == drop_xy
+    trail.append(m.payload)
+    m.update(30.0, drop_xy, 'reached')
+    assert m.phase == 'unloading'
+    assert m.update(30.0 + DWELL_S + 0.1, drop_xy, 'reached') == _at('dock')
+    trail.append(m.payload)
+    m.update(50.0, _at('dock'), 'reached')
+    assert m.phase == 'complete'
+    return trail
+
+
+def test_custom_job_station_to_station():
+    spec, points, label = custom_job_spec('block_pickup', 'building_door')
+    assert spec['legs'] == [('block_pickup', 'load'), ('building_door', 'unload'), ('dock', 'travel')]
+    assert points == {}
+    assert label == 'custom: block pickup → building door'
+    assert _run_custom(spec, points, _at('block_pickup'), _at('building_door')) == \
+        ['empty', 'materials', 'empty']
+
+
+def test_custom_job_point_to_point_and_mixed():
+    spec, points, label = custom_job_spec((4.5, -1.5), (-5.5, -1.0))
+    assert spec['legs'][0] == ('pickup', 'load') and spec['legs'][1] == ('drop_off', 'unload')
+    assert points == {'pickup': (4.5, -1.5), 'drop_off': (-5.5, -1.0)}
+    assert label == 'custom: (4.5, -1.5) → (-5.5, -1.0)'
+    assert _run_custom(spec, points, (4.5, -1.5), (-5.5, -1.0))[1] == 'materials'
+
+    spec, points, _ = custom_job_spec((-3.7, 4.5), 'scaffold')
+    assert spec['legs'][:2] == [('pickup', 'load'), ('scaffold', 'unload')]
+    assert _run_custom(spec, points, (-3.7, 4.5), _at('scaffold'))[2] == 'empty'
+
+
+@pytest.mark.parametrize('pickup, dropoff, reason', [
+    ('nowhere', 'scaffold', 'unknown station'),
+    ((-6.2, 5.4), 'scaffold', 'pick-up goal'),            # inside the site office
+    ('dock', (20.0, 0.0), 'drop-off goal'),               # outside the site
+    ('scaffold', 'scaffold', 'same place'),
+    ((-3.0, -3.0), (-3.2, -3.1), 'same place'),
+])
+def test_custom_job_rejections(pickup, dropoff, reason):
+    with pytest.raises(ValueError, match=reason):
+        custom_job_spec(pickup, dropoff)
+
+
+def test_custom_job_unreachable_is_rejected_when_planning():
+    class _NoRoute:
+        def plan(self, start, goal):
+            return None
+    with pytest.raises(ValueError, match='no route from pick-up'):
+        custom_job_spec('block_pickup', 'scaffold', planner=_NoRoute())
+    from site_planner import SitePlanner
+    custom_job_spec('block_pickup', 'building_door', planner=SitePlanner())   # real map: fine
