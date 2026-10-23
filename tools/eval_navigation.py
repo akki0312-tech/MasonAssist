@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.request
 
@@ -42,6 +43,7 @@ from std_msgs.msg import String  # noqa: E402
 API = 'http://localhost:8080'
 SAMPLE_S = 0.2
 RUN_TIMEOUT_S = 600
+GOAL_TIMEOUT_S = 240                 # per map-click goal in the 'goals' scenario
 SELF_BANDS_DEG = (96.8, 105.8)      # robot's own tracks, ignored for min LiDAR range
 STILL_MPS = 0.01                     # odom vs ground truth compared only when stopped
 DEBRIS_XY = (-3.17, -2.9)            # on the dock -> brick_pickup route; a detour exists
@@ -61,17 +63,24 @@ SCENARIOS = {   # name: (default reps, description)
 METRICS = ['wall_s', 'sim_s', 'rtf', 'travelled_m', 'planned_m', 'path_ratio', 'min_body_clearance_m',
            'min_lidar_m', 'min_unmapped_m', 'slow_s', 'stop_s', 'replans', 'reroutes',
            'max_learned_cells', 'supervisor_stops', 'max_arrival_err_m', 'final_dock_err_m',
-           'max_odom_gt_dev_m']
+           'max_est_err_m', 'mean_est_err_m', 'final_est_err_m', 'max_odom_drift_m', 'gt_check_dev_m']
 COLUMNS = ['scenario', 'rep', 'result', 'reason'] + METRICS + ['supervisor_reasons']
 
 
-def call(path, body=None, timeout=3):
+def call(path, body=None, timeout=5, attempts=3):
+    """HTTP API call. Error replies (4xx) come back as their JSON; connection
+    problems and timeouts are retried, then raised."""
     req = urllib.request.Request(API + path, json.dumps(body).encode() if body is not None else None,
                                  {'Content-Type': 'application/json'})
-    try:
-        return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
-    except urllib.error.HTTPError as e:
-        return json.loads(e.read())
+    for attempt in range(attempts):
+        try:
+            return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+        except urllib.error.HTTPError as e:
+            return json.loads(e.read())
+        except (urllib.error.URLError, OSError):
+            if attempt == attempts - 1:
+                raise
+            time.sleep(1.0)
 
 
 def ground_truth():
@@ -103,13 +112,17 @@ class Recorder:
     """Latest values from ROS topics plus a sampled trace with run counters."""
 
     def __init__(self, node):
-        self.pose = None          # (x, y, yaw)
+        self.pose = None          # TRUE pose (x, y, yaw) from /ground_truth/odom - all metrics use it
+        self.belief = None        # the robot's own pose estimate (/robot_pose)
+        self.odom = None          # raw odometry (/odom), to measure its drift
         self.v = 0.0
         self.sim = None
         self.safety = {}
         self.sup = None
         self.lidar_min = math.inf
         self.reset()
+        node.create_subscription(Odometry, '/ground_truth/odom', self._truth, 20)
+        node.create_subscription(Odometry, '/robot_pose', self._belief, 20)
         node.create_subscription(Odometry, '/odom', self._odom, 20)
         node.create_subscription(Clock, '/clock', self._clock, 10)
         node.create_subscription(String, '/safety_status', self._safety, 10)
@@ -124,10 +137,20 @@ class Recorder:
         self.slow_s = self.stop_s = 0.0
         self.gt_dev = 0.0
 
-    def _odom(self, m):
+    @staticmethod
+    def _xyyaw(m):
         p, q = m.pose.pose.position, m.pose.pose.orientation
-        self.pose = (p.x, p.y, math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
+        return (p.x, p.y, math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
+
+    def _truth(self, m):
+        self.pose = self._xyyaw(m)
         self.v = m.twist.twist.linear.x
+
+    def _belief(self, m):
+        self.belief = self._xyyaw(m)
+
+    def _odom(self, m):
+        self.odom = self._xyyaw(m)
 
     def _clock(self, m):
         self.sim = m.clock.sec + m.clock.nanosec * 1e-9
@@ -160,14 +183,19 @@ class Recorder:
         elif zone == 'stop':
             self.stop_s += SAMPLE_S
         x, y, yaw = self.pose
+        bx, by, _ = self.belief or (math.nan, math.nan, 0.0)
+        ox, oy, _ = self.odom or (math.nan, math.nan, 0.0)
         self.trace.append({'t': round(t, 2), 'sim': self.sim, 'x': x, 'y': y, 'yaw': yaw, 'v': self.v,
+                           'est_x': bx, 'est_y': by, 'est_err': math.hypot(bx - x, by - y),
+                           'odom_err': math.hypot(ox - x, oy - y),
                            'phase': m.get('phase'), 'leg_index': m.get('leg_index'),
                            'payload': m.get('payload'), 'nav': state.get('mission_status'),
                            'zone': zone, 'sup': self.sup, 'cells': state['live_map']['count'],
                            'replans': m.get('replans'), 'reroutes': m.get('reroutes')})
 
     def check_ground_truth(self):
-        """Compare odom with Gazebo's model pose while the robot is still."""
+        """Sanity check of /ground_truth/odom against Gazebo's model pose
+        (gz CLI), while the robot is still."""
         if self.pose is None or abs(self.v) > STILL_MPS:
             return
         before = self.pose
@@ -176,8 +204,9 @@ class Recorder:
             self.gt_dev = max(self.gt_dev, math.hypot(gt[0] - before[0], gt[1] - before[1]))
 
 
-def restart(gui):
-    args = [os.path.join(WS, 'start_demo.sh'), '--restart'] + ([] if gui else ['--headless'])
+def restart(gui, odometry, localization):
+    args = [os.path.join(WS, 'start_demo.sh'), '--restart', f'--odometry={odometry}',
+            f'--localization={localization}'] + ([] if gui else ['--headless'])
     r = subprocess.run(args, capture_output=True, text=True, timeout=300)
     return r.returncode == 0, r.stdout.strip().splitlines()[-3:]
 
@@ -251,7 +280,7 @@ def run_scenario(name, rec, planner):
                 break
             state, timed_out = wait_until(
                 rec, lambda s: (s['mission'] or {}).get('phase') in ('complete', 'failed', 'aborted'),
-                RUN_TIMEOUT_S, t0)
+                time.monotonic() - t0 + GOAL_TIMEOUT_S, t0)
             phase = (state['mission'] or {}).get('phase')
             if timed_out or phase != 'complete':
                 result = 'timeout' if timed_out else phase
@@ -284,7 +313,11 @@ def run_scenario(name, rec, planner):
         'supervisor_reasons': ' '.join(f'{k}:{v}' for k, v in sorted(rec.sup_events.items())),
         'max_arrival_err_m': round(max(errs), 3) if errs else None,
         'final_dock_err_m': round(math.hypot(gt[0] - DOCK[0], gt[1] - DOCK[1]), 3) if gt else None,
-        'max_odom_gt_dev_m': round(max(rec.gt_dev, math.hypot(gt[0] - rec.pose[0], gt[1] - rec.pose[1])), 3)
+        'max_est_err_m': round(max(s['est_err'] for s in trace), 3) if trace else None,
+        'mean_est_err_m': round(sum(s['est_err'] for s in trace) / len(trace), 3) if trace else None,
+        'final_est_err_m': round(trace[-1]['est_err'], 3) if trace else None,
+        'max_odom_drift_m': round(max(s['odom_err'] for s in trace), 3) if trace else None,
+        'gt_check_dev_m': round(max(rec.gt_dev, math.hypot(gt[0] - rec.pose[0], gt[1] - rec.pose[1])), 3)
         if gt and rec.pose else None,
     }
     return row
@@ -309,15 +342,15 @@ def fmt(st, unit='', nd=1):
     return f"{st['mean']:.{nd}f} ± {st['sd']:.{nd}f}{unit} ({st['min']:.{nd}f}–{st['max']:.{nd}f})"
 
 
-def write_summary(out, rows, started, gui):
+def write_summary(out, rows, started, gui, config):
     s = summarize(rows, METRICS)
     lines = [f'# Navigation evaluation - {started}', '',
-             f"{len(rows)} runs, {'Gazebo GUI' if gui else 'headless'}, each from a clean restart with the robot "
+             f"{len(rows)} runs, {config}, {'Gazebo GUI' if gui else 'headless'}, each from a clean restart with the robot "
              'at the dock. Mean ± sd (min–max) over successful runs.', '',
              '| Scenario | Success | Time (s) | Travelled (m) | Path ratio | Min body clearance (m) | '
              'Max arrival error (m) | Replans / reroutes | Learned cells (max) | Supervisor stops | '
-             'Odom vs ground truth (m) |',
-             '|---|---|---|---|---|---|---|---|---|---|---|']
+             'Pose estimate error, max (m) | Raw odometry drift, max (m) |',
+             '|---|---|---|---|---|---|---|---|---|---|---|---|']
     for name, v in s.items():
         st = v['stats']
         ok = [r for r in rows if r['scenario'] == name and r['result'] == 'complete']
@@ -328,7 +361,7 @@ def write_summary(out, rows, started, gui):
             f"{fmt(st['path_ratio'], nd=2)} | {mn('min_body_clearance_m')} | {mx('max_arrival_err_m')} | "
             f"{sum(r['replans'] or 0 for r in ok)} / {sum(r['reroutes'] or 0 for r in ok)} | "
             f"{mx('max_learned_cells')} | {sum(r['supervisor_stops'] or 0 for r in ok)} | "
-            f"{mx('max_odom_gt_dev_m')} |")
+            f"{mx('max_est_err_m')} | {mx('max_odom_drift_m')} |")
     failures = [r for r in rows if r['result'] != 'complete']
     lines += ['', '**Scenarios**', ''] + [f'- `{k}`: {SCENARIOS[k][1]}' for k in s]
     lines += ['', '**Failures**', ''] + ([f"- {r['scenario']} #{r['rep']}: {r['result']} - {r['reason']}"
@@ -338,8 +371,9 @@ def write_summary(out, rows, started, gui):
               '0.35 m and stops within 0.35 m of each station; above 1 = detours). '
               'Body clearance = smallest gap between the robot footprint and any known obstacle box '
               "(the boxes cover each object's collision shape, so this is conservative). "
-              'Supervisor stops = times the safety supervisor overrode navigation. Odom vs ground truth = '
-              'largest gap between odometry and Gazebo\'s model pose, checked while the robot was stopped.']
+              'Supervisor stops = times the safety supervisor overrode navigation. Pose estimate error = '
+              'largest gap between where the robot thought it was and where it really was (Gazebo ground '
+              'truth), sampled every 0.2 s through the run. All other metrics use the ground truth.']
     with open(os.path.join(out, 'summary.md'), 'w') as f:
         f.write('\n'.join(lines) + '\n')
     return '\n'.join(lines)
@@ -378,11 +412,31 @@ def plot_paths(out, rows, traces):
     fig.savefig(os.path.join(out, 'paths.png'), dpi=110)
 
 
+class _Tee:
+    """Console output also goes to <out>/log.txt."""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, text):
+        for st in self.streams:
+            st.write(text)
+            st.flush()
+
+    def flush(self):
+        for st in self.streams:
+            st.flush()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--scenarios', default=','.join(SCENARIOS), help='comma list: ' + ','.join(SCENARIOS))
     ap.add_argument('--reps', type=int, help='repetitions per scenario (default: per-scenario)')
     ap.add_argument('--gui', action='store_true', help='run with the Gazebo window')
+    ap.add_argument('--odometry', choices=['perfect', 'drift'], default='drift',
+                    help='odometry the robot uses (start_demo.sh --odometry)')
+    ap.add_argument('--localization', choices=['none', 'amcl'], default='amcl',
+                    help='localisation (start_demo.sh --localization)')
     ap.add_argument('--out', help='output directory (default eval_results/<timestamp>)')
     args = ap.parse_args()
     names = [n.strip() for n in args.scenarios.split(',') if n.strip()]
@@ -392,6 +446,7 @@ def main():
     started = time.strftime('%Y-%m-%d %H:%M')
     out = args.out or os.path.join(WS, 'eval_results', time.strftime('%Y%m%d-%H%M%S'))
     os.makedirs(os.path.join(out, 'traces'), exist_ok=True)
+    sys.stdout = _Tee(sys.stdout, open(os.path.join(out, 'log.txt'), 'w'))
 
     rclpy.init()
     node = rclpy.create_node('eval_navigation')
@@ -403,7 +458,7 @@ def main():
     plan = [(n, k + 1) for n in names for k in range(args.reps or SCENARIOS[n][0])]
     for i, (name, rep) in enumerate(plan, 1):
         print(f'[{i}/{len(plan)}] {name} #{rep}: restarting simulation...', flush=True)
-        ok, tail = restart(args.gui)
+        ok, tail = restart(args.gui, args.odometry, args.localization)
         rec.reset()
         t_wait = time.monotonic()
         while ok and (rec.pose is None or rec.sim is None) and time.monotonic() - t_wait < 30:
@@ -413,7 +468,19 @@ def main():
             row.update(scenario=name, rep=rep, result='start_failed', reason=' / '.join(tail))
             traces.append([])
         else:
-            row = run_scenario(name, rec, planner)
+            try:
+                row = run_scenario(name, rec, planner)
+            except Exception:   # a tool/stack problem must not end the batch mid-start
+                print(traceback.format_exc(), flush=True)
+                call_ok = False
+                try:
+                    call('/api/cmd', {'cmd': 'cancel'}, attempts=1)
+                    call_ok = True
+                except Exception:
+                    pass
+                row = {c: None for c in COLUMNS}
+                row.update(result='error', reason=traceback.format_exc().strip().splitlines()[-1]
+                           + ('' if call_ok else ' (API unreachable)'))
             row.update(scenario=name, rep=rep)
             traces.append(rec.trace)
             with open(os.path.join(out, 'traces', f'{name}_{rep}.csv'), 'w', newline='') as f:
@@ -429,7 +496,7 @@ def main():
             w.writeheader()
             w.writerows(rows)
 
-    print('\n' + write_summary(out, rows, started, args.gui))
+    print('\n' + write_summary(out, rows, started, args.gui, f'odometry={args.odometry}, localization={args.localization}'))
     plot_paths(out, rows, traces)
     print(f'\nResults: {out}')
     os._exit(0)

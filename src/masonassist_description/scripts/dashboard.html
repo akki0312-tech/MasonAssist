@@ -103,11 +103,13 @@
     </div>
 
     <div class="card">
-      <h3>Robot Pose (odometry)</h3>
+      <h3>Robot Pose (estimate)</h3>
       <div class="row2">
         <div class="kv"><span class="k">Position x,y (m)</span><span class="v" id="pos">-</span></div>
         <div class="kv"><span class="k">Heading (deg)</span><span class="v" id="yaw">-</span></div>
       </div>
+      <div class="kv"><span class="k">Localisation</span><span class="v" id="loc">-</span></div>
+      <div class="hint">The faint grey triangle on the map is the simulator's true pose.</div>
     </div>
 
     <div class="card">
@@ -545,7 +547,21 @@ function draw() {
     ctx.beginPath(); ctx.arc(gx, gy, 12, 0, 2 * Math.PI); ctx.stroke();
   }
 
-  // robot (odometry pose)
+  // true pose from the simulator (faint), to show the estimate's error
+  if (latestState.truth) {
+    const t = latestState.truth;
+    const [tx, ty] = worldToPx(t.x, t.y);
+    ctx.save();
+    ctx.translate(tx, ty);
+    ctx.rotate(-t.yaw);
+    ctx.fillStyle = 'rgba(200, 200, 200, 0.45)';
+    ctx.beginPath();
+    ctx.moveTo(13, 0); ctx.lineTo(-9, 7); ctx.lineTo(-9, -7); ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // robot (its own pose estimate)
   if (latestState.odom) {
     const { x, y, yaw } = latestState.odom;
     const [rx, ry] = worldToPx(x, y);
@@ -617,6 +633,12 @@ async function poll() {
       ? `v=${fmt(latestState.cmd_vel.lin_x)} w=${fmt(latestState.cmd_vel.ang_z)}` : 'no /cmd_vel yet';
     document.getElementById('cmdvelnav').textContent = latestState.cmd_vel_nav
       ? `v=${fmt(latestState.cmd_vel_nav.lin_x)} w=${fmt(latestState.cmd_vel_nav.ang_z)}` : 'none yet';
+    const L = latestState.localization, T = latestState.truth, O = latestState.odom;
+    if (L) {
+      const mode = {none: 'none (pose = odometry)', slam: 'SLAM (building a map)', amcl: 'AMCL on the saved map'}[L.localization] || L.localization;
+      const err = (T && O) ? `, error vs simulator truth ${Math.hypot(T.x - O.x, T.y - O.y).toFixed(2)} m` : '';
+      document.getElementById('loc').textContent = `${mode}; odometry: ${L.odometry}${err}`;
+    }
     document.getElementById('odomvel').textContent = latestState.odom_twist
       ? `v=${fmt(latestState.odom_twist.lin_x)} w=${fmt(latestState.odom_twist.ang_z)}` : '-';
     document.getElementById('scan').textContent = latestState.scan

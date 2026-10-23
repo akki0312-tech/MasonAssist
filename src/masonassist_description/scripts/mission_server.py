@@ -64,6 +64,8 @@ class MissionServerNode(Node):
             'goal': None,            # {x,y} or None - last goal this server sent
             'safety': None,          # {zone,nearest_m,unmapped} from vfh_plus_node, or None
             'supervisor': None,      # {reason,clamped,front_clear_m} from safety_supervisor
+            'truth': None,           # {x,y,yaw} simulator ground truth (display/evaluation only)
+            'localization': None,    # {odometry, localization} modes the stack was started with
         }
 
         self.goal_pub = self.create_publisher(Point, '/goal_pose', 10)
@@ -72,11 +74,18 @@ class MissionServerNode(Node):
         self.heartbeat_pub = self.create_publisher(String, '/operator_heartbeat', 10)
         self.create_timer(0.5, lambda: self.heartbeat_pub.publish(String(data='mission_server')))
 
-        self.create_subscription(Odometry, '/odom', self._odom_cb, 10)
+        # robot pose in the site/map frame (/robot_pose from map_pose_publisher)
+        self.create_subscription(Odometry, self.declare_parameter('pose_topic', '/odom').value,
+                                 self._odom_cb, 10)
         self.create_subscription(LaserScan, '/scan', self._scan_cb, 10)
         self.create_subscription(Twist, '/cmd_vel', self._cmd_vel_cb, 10)
         self.create_subscription(Twist, '/cmd_vel_nav', self._cmd_vel_nav_cb, 10)
         self.create_subscription(String, '/supervisor_status', self._supervisor_cb, 10)
+        # simulator only: the true pose, to show how far the estimate is off
+        self.create_subscription(Odometry, '/ground_truth/odom', self._truth_cb, 10)
+        self.state['localization'] = {
+            'odometry': self.declare_parameter('odometry', 'perfect').value,
+            'localization': self.declare_parameter('localization', 'none').value}
         self.create_subscription(String, '/mission_status', self._status_cb, 10)
         self.create_subscription(String, '/safety_status', self._safety_cb, 10)
 
@@ -124,6 +133,11 @@ class MissionServerNode(Node):
     def _cmd_vel_nav_cb(self, msg: Twist) -> None:
         with self.lock:
             self.state['cmd_vel_nav'] = {'lin_x': msg.linear.x, 'ang_z': msg.angular.z}
+
+    def _truth_cb(self, msg: Odometry) -> None:
+        p = msg.pose.pose.position
+        with self.lock:
+            self.state['truth'] = {'x': p.x, 'y': p.y, 'yaw': _yaw_of(msg.pose.pose.orientation)}
 
     def _supervisor_cb(self, msg: String) -> None:
         try:

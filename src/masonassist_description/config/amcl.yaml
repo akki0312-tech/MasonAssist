@@ -1,0 +1,41 @@
+# AMCL for MasonAssist: localise against the saved SLAM map
+# (maps/construction_site.yaml) using the 360-degree LiDAR.
+amcl:
+  ros__parameters:
+    use_sim_time: true
+    global_frame_id: map
+    odom_frame_id: odom
+    base_frame_id: base_footprint
+    scan_topic: /scan
+    robot_model_type: nav2_amcl::DifferentialMotionModel
+    # odometry noise model: skid-steer track odometry slips, mostly when turning
+    alpha1: 0.3      # rotation noise from rotation
+    alpha2: 0.1      # rotation noise from translation
+    alpha3: 0.1      # translation noise from translation
+    alpha4: 0.1      # translation noise from rotation
+    laser_model_type: likelihood_field
+    laser_min_range: 0.3      # the robot's own tracks return 0.10-0.19 m
+    laser_max_range: 10.0
+    max_beams: 90
+    z_hit: 0.6
+    z_rand: 0.4               # workers and new debris are not in the map
+    sigma_hit: 0.1
+    laser_likelihood_max_dist: 2.0
+    min_particles: 500
+    max_particles: 2000
+    pf_err: 0.05
+    pf_z: 0.99
+    resample_interval: 1
+    update_min_d: 0.1
+    update_min_a: 0.1
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+    transform_tolerance: 0.5
+    tf_broadcast: true
+    # the robot starts at the dock: the world origin, facing +x
+    set_initial_pose: true
+    initial_pose:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      yaw: 0.0

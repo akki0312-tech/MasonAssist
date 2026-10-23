@@ -31,6 +31,7 @@ install(
     launch
     config
     worlds
+    maps
     models
   DESTINATION share/${PROJECT_NAME}
 )
@@ -42,6 +43,8 @@ install(
     scripts/simple_obstacle_avoidance.py
     scripts/vfh_plus_node.py
     scripts/safety_supervisor.py
+    scripts/odom_drift.py
+    scripts/map_pose_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -52,5 +55,6 @@ install(
   FILES
     scripts/vfh_plus_core.py
     scripts/safety_supervisor_core.py
+    scripts/odom_drift_core.py
   DESTINATION lib/${PROJECT_NAME}
 )

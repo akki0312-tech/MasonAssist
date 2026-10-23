@@ -136,3 +136,50 @@ def summarize(rows, metrics):
         out[scenario] = {'runs': len(runs), 'ok': len(ok),
                          'stats': {m: _stats([r.get(m) for r in ok]) for m in metrics}}
     return out
+
+
+def box_distance(px, py, box):
+    cx, cy, hx, hy = box
+    return math.hypot(max(abs(px - cx) - hx, 0.0), max(abs(py - cy) - hy, 0.0))
+
+
+def map_quality(occupied, boxes=None, tol=0.15, step=0.1, limit=7.85):
+    """How well a built map matches the known layout.
+
+    occupied: [(x, y)] centres of occupied map cells, in the site frame.
+    precision: fraction of occupied cells within `tol` of a known box (the
+      rest are phantom walls or a misaligned map).
+    recall: fraction of box outline points (every `step` m, inside the
+      site) with an occupied cell within `tol` - faces the LiDAR never saw,
+      and objects lower than the scan plane, count as missed.
+    per_box: recall for each box name."""
+    named = OBSTACLES if boxes is None else boxes
+    near = [any(box_distance(x, y, b) <= tol for b in named.values()) for x, y in occupied]
+    precision = sum(near) / len(near) if near else None
+    grid = {}
+    for x, y in occupied:
+        grid.setdefault((round(x / tol), round(y / tol)), []).append((x, y))
+
+    def hit(px, py):
+        gx, gy = round(px / tol), round(py / tol)
+        return any(math.hypot(px - x, py - y) <= tol
+                   for i in (-1, 0, 1) for j in (-1, 0, 1) for x, y in grid.get((gx + i, gy + j), ()))
+    per_box, total, found = {}, 0, 0
+    for name, (cx, cy, hx, hy) in named.items():
+        pts = []
+        nx, ny = max(int(2 * hx / step), 1), max(int(2 * hy / step), 1)
+        for k in range(nx + 1):
+            x = cx - hx + 2 * hx * k / nx
+            pts += [(x, cy - hy), (x, cy + hy)]
+        for k in range(1, ny):
+            y = cy - hy + 2 * hy * k / ny
+            pts += [(cx - hx, y), (cx + hx, y)]
+        pts = [(x, y) for x, y in pts if abs(x) <= limit and abs(y) <= limit]
+        if not pts:
+            continue
+        h = sum(hit(x, y) for x, y in pts)
+        per_box[name] = h / len(pts)
+        total += len(pts)
+        found += h
+    return {'precision': precision, 'recall': found / total if total else None, 'per_box': per_box,
+            'occupied_cells': len(occupied)}

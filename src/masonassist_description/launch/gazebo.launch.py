@@ -5,7 +5,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, SetEnvironmentVariable
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import (Command, LaunchConfiguration, PathJoinSubstitution,
+from launch.substitutions import (EqualsSubstitution, Command, LaunchConfiguration, PathJoinSubstitution,
                                   PythonExpression, TextSubstitution)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -83,6 +83,17 @@ def generate_launch_description():
         description='safety_supervisor stops the robot if the mission server heartbeat '
                     '(/operator_heartbeat) is lost for 2 s. Set false when driving '
                     'without mission_server.py (e.g. manual /cmd_vel_nav tests).')
+    declare_localization = DeclareLaunchArgument(
+        'localization', default_value='amcl',
+        description="'none' = map->odom is identity (pose = odometry); 'slam' = slam_toolbox "
+                    "builds a new map; 'amcl' = localise against the saved map")
+    declare_map = DeclareLaunchArgument(
+        'map', default_value=os.path.join(pkg_share, 'maps', 'construction_site.yaml'),
+        description='saved map for localization:=amcl')
+    declare_odometry = DeclareLaunchArgument(
+        'odometry', default_value='drift',
+        description="'perfect' = /odom is Gazebo's true pose; 'drift' = realistic track "
+                    'odometry errors (see odom_drift_core.py)')
     declare_headless = DeclareLaunchArgument(
         'headless', default_value='false',
         description='true = run the Gazebo server only (no 3D GUI window). In this VM '
@@ -257,8 +268,65 @@ def generate_launch_description():
         ],
         remappings=[
             ('/model/masonassist/cmd_vel', '/cmd_vel'),
-            ('/model/masonassist/odometry_sim', '/odom'),
+            # Gazebo's true pose; odom_drift (below) turns it into /odom
+            ('/model/masonassist/odometry_sim', '/ground_truth/odom'),
         ],
+    )
+
+    # ----------------------------------------------------------------
+    # Odometry: /ground_truth/odom -> /odom. odometry:=drift adds the errors
+    # real track odometry makes (odom_drift_core.py); odometry:=perfect
+    # passes the ground truth through. Only evaluation tools read
+    # /ground_truth/odom - the robot's own stack only sees /odom.
+    # ----------------------------------------------------------------
+    # ----------------------------------------------------------------
+    # Localisation: who provides map->odom. The robot spawns at the world
+    # origin, so the map frame lines up with the site coordinates the
+    # planner and dashboard use. map_pose_publisher turns map->odom + /odom
+    # into /robot_pose, which navigation and the mission server read.
+    # ----------------------------------------------------------------
+    static_map_odom = Node(
+        package='tf2_ros', executable='static_transform_publisher', name='map_odom_identity',
+        arguments=['--frame-id', 'map', '--child-frame-id', 'odom'],
+        parameters=[{'use_sim_time': True}],
+        condition=IfCondition(EqualsSubstitution(LaunchConfiguration('localization'), 'none')),
+    )
+    # slam_toolbox is a lifecycle node on Jazzy: its own launch file
+    # configures and activates it
+    slam_node = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            get_package_share_directory('slam_toolbox'), 'launch', 'online_async_launch.py')),
+        launch_arguments={'slam_params_file': os.path.join(pkg_share, 'config', 'slam_mapping.yaml'),
+                          'use_sim_time': 'true'}.items(),
+        condition=IfCondition(EqualsSubstitution(LaunchConfiguration('localization'), 'slam')),
+    )
+    map_server_node = Node(
+        package='nav2_map_server', executable='map_server', name='map_server', output='screen',
+        parameters=[{'use_sim_time': True, 'yaml_filename': LaunchConfiguration('map')}],
+        condition=IfCondition(EqualsSubstitution(LaunchConfiguration('localization'), 'amcl')),
+    )
+    amcl_node = Node(
+        package='nav2_amcl', executable='amcl', name='amcl', output='screen',
+        parameters=[os.path.join(pkg_share, 'config', 'amcl.yaml'), {'use_sim_time': True}],
+        condition=IfCondition(EqualsSubstitution(LaunchConfiguration('localization'), 'amcl')),
+    )
+    localization_lifecycle = Node(
+        package='nav2_lifecycle_manager', executable='lifecycle_manager',
+        name='lifecycle_manager_localization', output='screen',
+        parameters=[{'use_sim_time': True, 'autostart': True, 'node_names': ['map_server', 'amcl']}],
+        condition=IfCondition(EqualsSubstitution(LaunchConfiguration('localization'), 'amcl')),
+    )
+    map_pose_node = Node(
+        package='masonassist_description', executable='map_pose_publisher.py',
+        name='map_pose_publisher', output='screen', parameters=[{'use_sim_time': True}],
+    )
+
+    odom_drift_node = Node(
+        package='masonassist_description',
+        executable='odom_drift.py',
+        name='odom_drift',
+        output='screen',
+        parameters=[{'use_sim_time': True, 'mode': LaunchConfiguration('odometry')}],
     )
 
     # ----------------------------------------------------------------
@@ -342,7 +410,7 @@ def generate_launch_description():
         executable='vfh_plus_node.py',
         name='vfh_plus_node',
         output='screen',
-        parameters=[{'use_sim_time': True}],
+        parameters=[{'use_sim_time': True, 'pose_topic': '/robot_pose'}],
         remappings=[('/cmd_vel', '/cmd_vel_nav')],   # goes through safety_supervisor
         condition=IfCondition(LaunchConfiguration('enable_vfh_plus')),
     )
@@ -376,6 +444,9 @@ def generate_launch_description():
         declare_world_file,
         declare_headless,
         declare_require_operator_link,
+        declare_odometry,
+        declare_localization,
+        declare_map,
         validate_controller_selection,
         gazebo_sim,
         robot_state_publisher_node,
@@ -389,5 +460,12 @@ def generate_launch_description():
         obstacle_avoidance_node,
         vfh_plus_node,
         safety_supervisor_node,
+        odom_drift_node,
+        static_map_odom,
+        slam_node,
+        map_server_node,
+        amcl_node,
+        localization_lifecycle,
+        map_pose_node,
         spawn_robot_node,
     ])

@@ -224,7 +224,10 @@ class VFHPlusNode(Node):
         self.safety_gate = SafetyGate()
         self._safety_published = False
         self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
-        self.odom_sub = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
+        # pose in the site/map frame: /robot_pose (map_pose_publisher) in the
+        # full stack; plain /odom when run on its own
+        pose_topic = self.declare_parameter('pose_topic', '/odom').value
+        self.odom_sub = self.create_subscription(Odometry, pose_topic, self.odom_callback, 10)
         self.goal_sub = self.create_subscription(Point, '/goal_pose', self.goal_callback, 10)
         self.cmd_sub = self.create_subscription(String, '/mission_cmd', self.mission_cmd_callback, 10)
         self.watchdog_timer = self.create_timer(0.1, self.watchdog_callback)

@@ -13,6 +13,7 @@ This is a **simulation project**. Nothing here has run on physical hardware.
 - **Transport missions** — multi-leg jobs such as *brick pickup → building door → dock*, with load/unload stops and payload tracking.
 - **Job queue + history** — queue several deliveries; the robot runs them back to back. A failed or cancelled job pauses the queue until the operator resumes it.
 - **Route planning** — A\* on the known site layout plans corner-safe waypoints for every leg and every map click.
+- **Localisation** — odometry drifts the way real track odometry does (slip on distance and turning). The robot localises with AMCL against a map of the site built with SLAM (slam_toolbox), so it stays within a few centimetres of its true position.
 - **Live obstacle map** — obstacles the LiDAR sees that are not in the site layout (debris, a new pallet) and that stay put for 4 s are learned into an occupancy grid; the robot reroutes around them immediately, and they clear again once the LiDAR sees through the empty space.
 - **Local obstacle avoidance** — a VFH+ (Vector Field Histogram Plus) controller drives between waypoints using live 360° LiDAR.
 - **Human-aware safety** — LiDAR returns that are *not* part of the known site layout are treated as possible people or debris: the robot slows to 40 % within 2 m and stops within 1 m in its path, then resumes 1 s after the path clears.
@@ -29,11 +30,14 @@ This is a **simulation project**. Nothing here has run on physical hardware.
 ```mermaid
 flowchart LR
   subgraph GZ["Gazebo Harmonic - construction_site.world"]
-    ROBOT["MasonAssist robot<br/>TrackedVehicle + OdometryPublisher<br/>gpu_lidar"]
+    ROBOT["MasonAssist robot<br/>TrackedVehicle + OdometryPublisher (true pose)<br/>gpu_lidar"]
     WORKERS["worker_1 / worker_2"]
   end
 
-  BRIDGE["ros_gz_bridge<br/>/cmd_vel /odom /scan_raw /clock<br/>set_pose service"]
+  BRIDGE["ros_gz_bridge<br/>/cmd_vel /ground_truth/odom /scan_raw /clock<br/>set_pose service"]
+  DRIFT["odom_drift<br/>realistic track odometry"]
+  LOC["AMCL + map_server<br/>(saved SLAM map)"]
+  MPP["map_pose_publisher"]
   SFF["scan_frame_fix"]
   TF["odom_to_tf_broadcaster<br/>robot_state_publisher"]
   VFH["vfh_plus_node<br/>VFH+ core + safety gate"]
@@ -44,15 +48,16 @@ flowchart LR
 
   ROBOT <--> BRIDGE
   BRIDGE -- "/scan_raw" --> SFF -- "/scan" --> VFH
-  BRIDGE -- "/odom" --> VFH
-  BRIDGE -- "/odom" --> TF
+  BRIDGE -- "/ground_truth/odom" --> DRIFT -- "/odom" --> TF
+  SFF -- "/scan" --> LOC -- "map→odom TF" --> MPP
+  DRIFT -- "/odom" --> MPP -- "/robot_pose" --> VFH
   VFH -- "/cmd_vel_nav" --> SUP -- "/cmd_vel (20 Hz)" --> BRIDGE
   SFF -- "/scan" --> SUP
   MS -- "/mission_cmd, /operator_heartbeat" --> SUP
   MS -- "/goal_pose, /mission_cmd" --> VFH
   VFH -- "/mission_status, /safety_status" --> MS
   SFF -- "/scan" --> MS
-  BRIDGE -- "/odom" --> MS
+  MPP -- "/robot_pose" --> MS
   MS <-- "HTTP JSON" --> UI
   WM -- "set_pose" --> BRIDGE
   BRIDGE --> WORKERS
@@ -105,6 +110,9 @@ source install/setup.bash
 ./start_demo.sh              # Gazebo 3D window + robot + workers + dashboard
 ./start_demo.sh --headless   # no Gazebo window (much faster in a VM; dashboard still shows everything)
 ./start_demo.sh --restart    # stop anything already running, then start
+# defaults: drifting odometry + AMCL localisation on the saved map. Other options:
+./start_demo.sh --odometry=perfect --localization=none   # robot uses the simulator's true pose
+./start_demo.sh --localization=none                      # drifting odometry, no localisation (it gets lost)
 ./stop_demo.sh               # stop everything cleanly
 ```
 
@@ -199,7 +207,10 @@ curl -X POST localhost:8080/api/queue -H 'Content-Type: application/json' \
 | Name | Type | Direction |
 |---|---|---|
 | `/scan` | `sensor_msgs/LaserScan` | `scan_frame_fix` → everyone (360° LiDAR, frame `laser_frame`) |
-| `/odom` | `nav_msgs/Odometry` | Gazebo `OdometryPublisher` → bridge |
+| `/ground_truth/odom` | `nav_msgs/Odometry` | Gazebo `OdometryPublisher` (true pose) → `odom_drift`; also read by evaluation and the dashboard's "true pose" marker |
+| `/odom` | `nav_msgs/Odometry` | `odom_drift` → TF `odom→base_footprint`, AMCL, supervisor |
+| `/map` | `nav_msgs/OccupancyGrid` | `map_server` (saved SLAM map) → AMCL |
+| `/robot_pose` | `nav_msgs/Odometry` (frame `map`) | `map_pose_publisher` (AMCL's `map→odom` + `/odom`) → `vfh_plus_node`, `mission_server` |
 | `/cmd_vel_nav` | `geometry_msgs/Twist` | `vfh_plus_node` → `safety_supervisor` |
 | `/cmd_vel` | `geometry_msgs/Twist` | `safety_supervisor` → bridge → TrackedVehicle (20 Hz, always) |
 | `/operator_heartbeat` | `std_msgs/String` | `mission_server` → `safety_supervisor` (2 Hz) |
@@ -215,6 +226,46 @@ curl -X POST localhost:8080/api/queue -H 'Content-Type: application/json' \
 ## Verified results
 
 Measured in simulation in this repository's VM. These are small samples — they show the system working and repeatable, not statistical reliability.
+
+### Localisation: SLAM map + AMCL vs drifting odometry
+
+Real track odometry drifts: tracks slip, and skid-steer turning slips a lot. In simulation the robot's `/odom` comes from `odom_drift`, which adds that kind of error to the simulator's true motion:
+- +3 % on distance;
+- +6 % on turning;
+- a heading bias that slowly wanders, seeded so runs are repeatable.
+
+Over a mission that adds up to 1–6 m of error. The robot localises against a map of the site, built once with SLAM, using AMCL.
+
+**Map** (`tools/build_map.py`):
+- slam_toolbox built the map from a 76 m coverage tour driven on drifting odometry, with the workers moved off site so people aren't mapped.
+- During the tour, raw odometry was off by up to 6.7 m (mean 2.9 m); the SLAM pose was off by at most 0.088 m (mean 0.021 m).
+- 99.9 % of the occupied map cells lie on known objects, and 68.6 % of the object outlines were mapped. The misses are the far corner column, the thin safety-tape posts and objects below the LiDAR's 0.27 m scan height.
+- The map is in `maps/construction_site.{yaml,pgm}`.
+
+![SLAM map](docs/map/construction_site_map.png)
+
+**Three-way comparison:** the same scenarios (bricks ×2, blocks ×2, 5-goal tour ×2), each from a clean restart. Data: [`docs/localization/runs.csv`](docs/localization/runs.csv).
+
+| Setup | Success | Pose error vs truth (mean / max) | Raw odometry drift (max) | Closest body clearance | Time vs perfect |
+|---|---|---|---|---|---|
+| Perfect odometry (simulator truth) | 6/6 | 0.000 / 0.009 m | — | 0.094 m | — |
+| Drifting odometry, **no** localisation | **0/6** | 0.31–1.43 / 1.83 m | 1.83 m | **0.0 m** (contact) | — |
+| Drifting odometry **+ AMCL** (default) | **6/6** | **0.022–0.037 / 0.090 m** | 4.17 m | 0.101 m | +0 to +3 s |
+
+Without localisation:
+- every job failed: "no route", "no progress after 2 replans", or a timeout;
+- the robot touched obstacles;
+- it learned up to 204 cells of phantom obstacles, because it saw the real walls where its drifted pose said there should be none.
+
+With AMCL, every job completed with the same paths and times as perfect odometry.
+
+![Pose error](docs/localization/pose_error.png)
+
+```bash
+python3 tools/eval_navigation.py --scenarios bricks,blocks,goals --reps 2 --odometry drift --localization amcl
+python3 tools/eval_navigation.py ... --odometry drift --localization none     # to see it fail
+python3 tools/build_map.py                                                    # rebuild the map
+```
 
 ### Navigation evaluation (reproducible)
 
@@ -241,7 +292,7 @@ Output goes to `eval_results/<timestamp>/`. The reference run below is committed
 What the columns mean:
 - **Path ratio:** distance driven ÷ shortest planned route. Just under 1 is normal, since the robot cuts waypoint corners and stops within 0.35 m of each station. The debris runs drive about 6 % further for the detour.
 - **Body clearance:** the smallest gap between the robot's footprint and any obstacle's collision box. The closest pass, about 0.09 m, is the warning sign beside the building door. Its collision box is a 0.6 m-wide panel down to the ground, although the visible part at robot height is a 4 cm post.
-- **Odometry vs ground truth:** 0.000 m in every run, checked while the robot was stopped. Odometry is Gazebo's `OdometryPublisher`, so this column only becomes meaningful once odometry is made to drift (SLAM phase).
+- **Odometry:** this reference run used perfect odometry (the simulator's true pose), from before localisation was added. The localisation comparison above repeats these scenarios with drifting odometry and AMCL.
 - **Debris:** both debris runs learned the box (26 and 27 cells), rerouted once and completed.
 - **Supervisor:** it never had to override navigation in these runs.
 - **Mission times** are about 15 s shorter than the older single runs below. Those had extra per-second `gz` logging that slowed the simulator.
@@ -297,15 +348,16 @@ The planner now takes the brick legs around the formwork stack (+0.46 m and +0.6
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 python3 -m pytest src/masonassist_description/test/
 ```
-194 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the safety supervisor, world-vs-obstacle-registry consistency, the evaluation metrics, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
+203 tests covering the VFH+ core and node, LiDAR self-occlusion handling, safety zones, the safety supervisor, world-vs-obstacle-registry consistency, the evaluation metrics, drifting odometry and pose composition, the A\* planner, the live obstacle map, the mission sequencer, the job queue and controller selection.
 
 ---
 
 ## Limitations
 
 - **Simulation only** — no hardware testing.
-- **Odometry is near-perfect** — it comes from Gazebo's `OdometryPublisher`, which follows the simulated motion. A real robot would need proper localization.
-- **Planning starts from an authored map** — the A\* planner knows the site layout as it was built into the world and adds obstacles it has seen with the LiDAR. There is no SLAM and no Nav2: the live map relies on the simulator's near-perfect odometry, and only learns objects that stay put for 4 s.
+- **Odometry drift is modelled, not physical** — `odom_drift` adds track-odometry-style errors to the simulator's true motion. A real robot's drift will have its own character, and AMCL's noise parameters may need retuning.
+- **Two maps** — AMCL localises on the SLAM map, but route planning uses the authored layout (`worker_mover.OBSTACLES`) plus learned obstacles. They agree (99.9 % of map cells lie on known objects), but on a real site the plan would come from the SLAM map. There is no Nav2. The live map only learns objects that stay put for 4 s.
+- **Start pose is known** — AMCL starts at the dock. There is no global relocalisation if the robot is started elsewhere.
 - **"Unmapped" is not person recognition** — anything not in the layout (a person, debris, a new pallet) triggers the safety zones the same way.
 - **LiDAR self-occlusion mask** — two 9° bands where the robot's own tracks block the LiDAR are ignored. A very narrow obstacle that sits *only* inside those bands could go unseen; in that case the controller reports no data and stops rather than driving on.
 - **The emergency stop is software** — the supervisor sends zero velocity, but on a real robot the e-stop must also cut motor power in hardware. The supervisor itself runs as an ordinary ROS process; if it hangs, the TrackedVehicle plugin keeps executing its last command (measured: frozen supervisor, robot carried on at 0.2 m/s, 0.59 m in 3 s). The dashboard then shows `not running`; a real robot needs a motor-controller command timeout below this layer.
@@ -321,11 +373,15 @@ python3 -m pytest src/masonassist_description/test/
 ```
 start_demo.sh / stop_demo.sh            one-command demo start/stop
 tools/eval_navigation.py                repeatable navigation evaluation -> CSV, summary, path plot
+tools/build_map.py                      SLAM mapping tour -> maps/construction_site.{yaml,pgm} + quality check
+docs/map/, docs/localization/           map image, localisation comparison
 docs/eval/                              reference evaluation results
 src/masonassist_description/
   launch/gazebo.launch.py               simulation, bridges, robot spawn, VFH+ node, safety supervisor
   models/masonassist/model.sdf          robot model (tracks, LiDAR, odometry plugin)
   worlds/construction_site.world        construction site: stations, materials, building, facilities, workers
+  maps/construction_site.{yaml,pgm}     SLAM map of the site (AMCL localises on it)
+  config/amcl.yaml, slam_mapping.yaml   localisation and mapping parameters
   scripts/
     vfh_plus_core.py                    VFH+ algorithm (ROS-free)
     vfh_plus_node.py                    ROS controller: VFH+, recovery, escape, safety gate
@@ -340,6 +396,8 @@ src/masonassist_description/
     dashboard.html                      the web dashboard
     worker_mover.py                     moves the construction workers; site obstacle list
     eval_metrics.py                     evaluation metrics: path length, clearance, arrival error (ROS-free)
+    odom_drift_core.py / odom_drift.py  drifting track odometry from the true pose (ROS-free core + node)
+    map_pose_publisher.py               /robot_pose = map->odom (AMCL) + /odom
     scan_frame_fix.py, odom_to_tf_broadcaster.py   LiDAR frame and TF helpers
   test/                                 pytest suite
 HANDOFF.md                              original robot geometry, TF and propulsion validation notes

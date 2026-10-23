@@ -94,3 +94,18 @@ def test_summarize_counts_failures_against_success_only():
     assert st['mean'] == pytest.approx(155.0) and st['max'] == 160.0
     assert st['sd'] == pytest.approx(math.sqrt(50))
     assert s['goals']['stats']['wall_s'] is None
+
+
+def test_map_quality_perfect_partial_and_phantom():
+    from eval_metrics import map_quality
+    boxes = {'a': (0.0, 0.0, 1.0, 0.5)}
+    outline = [(x / 10, y) for x in range(-10, 11) for y in (-0.5, 0.5)] + \
+              [(x, y / 10) for x in (-1.0, 1.0) for y in range(-5, 6)]
+    q = map_quality(outline, boxes)
+    assert q['precision'] == 1.0 and q['recall'] == pytest.approx(1.0)
+    # only the south face seen, plus two phantom cells far away
+    south = [(x / 10, -0.5) for x in range(-10, 11)]
+    q = map_quality(south + [(5.0, 5.0), (-5.0, 3.0)], boxes)
+    assert q['precision'] == pytest.approx(21 / 23)
+    assert 0.3 < q['recall'] < 0.5
+    assert map_quality([], boxes)['precision'] is None

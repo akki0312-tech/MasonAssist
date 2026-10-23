@@ -5,22 +5,32 @@
 #   ./start_demo.sh --restart   stop everything first, then start
 #   ./start_demo.sh --headless  no Gazebo 3D window (much faster in this VM;
 #                               the dashboard still shows everything)
+#   --odometry=drift|perfect    odometry source (default drift = realistic
+#                               track odometry errors, see odom_drift_core.py;
+#                               perfect = the simulator's true pose)
+#   --localization=amcl|none|slam (default amcl)
+#                               none = pose is odometry; slam = build a new map
+#                               (slam_toolbox); amcl = localise on the saved map
+#   --no-workers                don't start the moving workers (used for mapping)
 # Each component runs in its own process group so stop_demo.sh can kill the
 # whole tree. Logs: /tmp/masonassist_demo/*.log
 set -u
 WS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_DIR=/tmp/masonassist_demo
-PATTERN='gz sim|vfh_plus_node\.py|safety_supervisor\.py|mission_server\.py|worker_mover\.py|scan_frame_fix\.py|odom_to_tf_broadcaster\.py|robot_state_publisher|joint_state_publisher|ros_gz_bridge/parameter_bridge|ros2 launch masonassist_description'
+PATTERN='gz sim|vfh_plus_node\.py|safety_supervisor\.py|odom_drift\.py|map_pose_publisher\.py|async_slam_toolbox_node|nav2_map_server/map_server|nav2_amcl/amcl|nav2_lifecycle_manager/lifecycle_manager|tf2_ros/static_transform_publisher|mission_server\.py|worker_mover\.py|scan_frame_fix\.py|odom_to_tf_broadcaster\.py|robot_state_publisher|joint_state_publisher|ros_gz_bridge/parameter_bridge|ros2 launch masonassist_description'
 
 running() {
     ps -eo pid=,args= | grep -E "$PATTERN" | grep -v -E "grep|stop_demo|start_demo"
 }
 
-RESTART=false; HEADLESS=false
+RESTART=false; HEADLESS=false; ODOMETRY=drift; LOCALIZATION=amcl; WORKERS=true
 for arg in "$@"; do
     case "$arg" in
         --restart) RESTART=true ;;
         --headless) HEADLESS=true ;;
+        --odometry=perfect|--odometry=drift) ODOMETRY=${arg#*=} ;;
+        --localization=none|--localization=slam|--localization=amcl) LOCALIZATION=${arg#*=} ;;
+        --no-workers) WORKERS=false ;;
         *) echo "unknown option: $arg"; exit 2 ;;
     esac
 done
@@ -59,7 +69,8 @@ fail() {  # a half-started stack is worse than none: stop it all
 
 echo "[1/3] Gazebo + robot + VFH+ navigation..."
 launch sim ros2 launch masonassist_description gazebo.launch.py \
-    world_file:=construction_site.world enable_vfh_plus:=true headless:=$HEADLESS
+    world_file:=construction_site.world enable_vfh_plus:=true headless:=$HEADLESS \
+    odometry:=$ODOMETRY localization:=$LOCALIZATION
 for i in $(seq 1 90); do
     grep -q "Entity creation successful" "$RUN_DIR/sim.log" 2>/dev/null && break
     sleep 1
@@ -69,11 +80,16 @@ if ! grep -q "Entity creation successful" "$RUN_DIR/sim.log"; then
 fi
 sleep 3
 
-echo "[2/3] Moving workers..."
-launch workers python3 src/masonassist_description/scripts/worker_mover.py
+if $WORKERS; then
+    echo "[2/3] Moving workers..."
+    launch workers python3 src/masonassist_description/scripts/worker_mover.py
+else
+    echo "[2/3] Moving workers: skipped (--no-workers)"
+fi
 
 echo "[3/3] Mission server + dashboard..."
-launch mission_server python3 src/masonassist_description/scripts/mission_server.py
+launch mission_server python3 src/masonassist_description/scripts/mission_server.py \
+    --ros-args -p pose_topic:=/robot_pose -p odometry:=$ODOMETRY -p localization:=$LOCALIZATION
 for i in $(seq 1 30); do
     curl -s -m 2 -o /dev/null -w '%{http_code}' localhost:8080/api/state 2>/dev/null | grep -q 200 && break
     sleep 1
@@ -89,6 +105,8 @@ sleep 5
 COMPONENTS="gazebo-server:^gz sim server|^gz sim -r -s
 vfh_plus_node:vfh_plus_node\.py
 safety_supervisor:safety_supervisor\.py
+odom_drift:odom_drift\.py
+map_pose_publisher:map_pose_publisher\.py
 robot_state_publisher:robot_state_publisher
 joint_state_publisher:joint_state_publisher
 clock_bridge:__node:=clock_bridge
@@ -97,10 +115,21 @@ masonassist_bridge:__node:=masonassist_bridge
 lidar_bridge:__node:=lidar_bridge
 scan_frame_fix:scan_frame_fix\.py
 odom_to_tf_broadcaster:odom_to_tf_broadcaster\.py
-worker_mover:worker_mover\.py
 mission_server:mission_server\.py"
 $HEADLESS || COMPONENTS="$COMPONENTS
 gazebo-gui:gz sim gui"
+$WORKERS && COMPONENTS="$COMPONENTS
+worker_mover:worker_mover\.py"
+case $LOCALIZATION in
+    none) COMPONENTS="$COMPONENTS
+map_odom_identity:__node:=map_odom_identity" ;;
+    slam) COMPONENTS="$COMPONENTS
+slam_toolbox:async_slam_toolbox_node" ;;
+    amcl) COMPONENTS="$COMPONENTS
+map_server:nav2_map_server/map_server
+amcl:nav2_amcl/amcl
+lifecycle_manager:__node:=lifecycle_manager_localization" ;;
+esac
 MISSING=""
 N=0
 while IFS= read -r line; do
@@ -122,9 +151,9 @@ print(' '.join(gone))" 2>&1)
 [ -z "$DATA" ] || fail "No data from: $DATA - see $RUN_DIR/*.log"
 
 if $HEADLESS; then
-    echo "Running: all $N components (headless, no Gazebo GUI); odometry, LiDAR, supervisor and navigation status flowing"
+    echo "Running: all $N components (headless, no Gazebo GUI, odometry=$ODOMETRY, localization=$LOCALIZATION); odometry, LiDAR, supervisor and navigation status flowing"
 else
-    echo "Running: all $N components incl. Gazebo GUI; odometry, LiDAR, supervisor and navigation status flowing"
+    echo "Running: all $N components incl. Gazebo GUI (odometry=$ODOMETRY, localization=$LOCALIZATION); odometry, LiDAR, supervisor and navigation status flowing"
 fi
 echo "Dashboard: http://localhost:8080"
 echo "Stop with: ./stop_demo.sh"
