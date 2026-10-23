@@ -10,6 +10,7 @@ cut motor power in hardware.
 """
 
 import json
+import math
 import os
 import sys
 import time
@@ -24,6 +25,7 @@ from std_msgs.msg import String
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from safety_supervisor_core import SafetySupervisorCore  # noqa: E402
+from site_config import load_no_go_zones, zones_blocking  # noqa: E402
 
 RATE_HZ = 20.0
 
@@ -34,10 +36,14 @@ class SafetySupervisor(Node):
         super().__init__('safety_supervisor')
         self.declare_parameter('require_operator_link', True)
         self.declare_parameter('use_imu', True)          # tilt guard from /imu
-        self.declare_parameter('payload_kg', 0.0)        # sets the tilt limit
+        self.declare_parameter('payload_kg', 0.0)        # tilt limit and no-go zones
+        payload = float(self.get_parameter('payload_kg').value)
+        # no-go zones (config/site.yaml) that apply at this payload
+        zones = zones_blocking(load_no_go_zones(), payload)
         self.core = SafetySupervisorCore(self.get_parameter('require_operator_link').value,
-                                         self.get_parameter('use_imu').value,
-                                         float(self.get_parameter('payload_kg').value))
+                                         self.get_parameter('use_imu').value, payload, zones)
+        if zones:
+            self.get_logger().info(f'no-go zones for {payload:g} kg: {", ".join(zones)}')
         self.last_reason = None
 
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -48,6 +54,7 @@ class SafetySupervisor(Node):
         self.create_subscription(Odometry, '/odom', lambda _m: self.core.on_odom(*self._now()), 10)
         self.create_subscription(LaserScan, '/scan', self._scan_cb, 10)
         self.create_subscription(Imu, '/imu', self._imu_cb, 20)
+        self.create_subscription(Odometry, '/robot_pose', self._pose_cb, 20)
         self.create_subscription(String, '/operator_heartbeat',
                                  lambda _m: self.core.on_heartbeat(time.monotonic()), 10)
         # steady clock: keep publishing even if sim time (/clock) stops
@@ -64,6 +71,11 @@ class SafetySupervisor(Node):
 
     def _mission_cmd_cb(self, msg):
         self.core.on_mission_cmd(msg.data.strip().lower())
+
+    def _pose_cb(self, msg):
+        p, q = msg.pose.pose.position, msg.pose.pose.orientation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        self.core.on_pose(p.x, p.y, yaw, *self._now())
 
     def _imu_cb(self, msg):
         q = msg.orientation
@@ -83,6 +95,7 @@ class SafetySupervisor(Node):
             'front_clear_m': None if self.core.front_clear == float('inf') else round(self.core.front_clear, 2),
             'tilt_deg': round(self.core.tilt, 1) if self.core.use_imu else None,
             'tilt_limit_deg': round(self.core.tilt_limit, 1) if self.core.use_imu else None,
+            'zone': self.core.zone_hit,
         })))
         if reason != self.last_reason:
             if reason == 'ok':

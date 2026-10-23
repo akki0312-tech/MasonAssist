@@ -6,8 +6,9 @@ payload_kg), and only the bridges the test harness needs: /cmd_vel in,
 service to place the robot at each lane. No navigation: this measures what
 the vehicle itself can do on slopes.
 
-supervisor:=true adds the safety supervisor (and the LiDAR, /odom and IMU it
-needs): commands then go to /cmd_vel_nav, so its tilt guard can be tested.
+supervisor:=true adds the safety supervisor (and the LiDAR, /odom, /robot_pose
+and IMU it needs): commands then go to /cmd_vel_nav, so its tilt guard and
+the no-go zones of config/terrain_site.yaml can be tested.
 """
 import os
 import sys
@@ -47,6 +48,8 @@ def generate_launch_description():
         DeclareLaunchArgument('headless', default_value='true'),
         DeclareLaunchArgument('supervisor', default_value='false'),
         SetEnvironmentVariable('GZ_SIM_RESOURCE_PATH', resource_path),
+        # the supervisor's no-go zones for this world (tools/make_terrain_world.py)
+        SetEnvironmentVariable('MASONASSIST_SITE_CONFIG', os.path.join(pkg_share, 'config', 'terrain_site.yaml')),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(
                 get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')),
@@ -71,6 +74,12 @@ def generate_launch_description():
         Node(package='masonassist_description', executable='odom_drift.py', name='odom_drift',
              parameters=[{'use_sim_time': True, 'mode': 'perfect'}],
              condition=IfCondition(LaunchConfiguration('supervisor'))),
+        # /robot_pose for the zone guard: perfect odometry here, so map = odom
+        Node(package='tf2_ros', executable='static_transform_publisher', name='map_odom_identity',
+             arguments=['--frame-id', 'map', '--child-frame-id', 'odom'], parameters=[{'use_sim_time': True}],
+             condition=IfCondition(LaunchConfiguration('supervisor'))),
+        Node(package='masonassist_description', executable='map_pose_publisher.py', name='map_pose_publisher',
+             parameters=[{'use_sim_time': True}], condition=IfCondition(LaunchConfiguration('supervisor'))),
         Node(package='masonassist_description', executable='safety_supervisor.py', name='safety_supervisor',
              output='screen',
              parameters=[{'use_sim_time': True, 'require_operator_link': False,

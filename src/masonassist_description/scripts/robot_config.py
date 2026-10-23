@@ -17,7 +17,7 @@ DEFAULTS = {
               'self_occlusion_bands_deg': [[-105.8, -96.8], [96.8, 105.8]]},
     'navigation': {'robot_radius_m': 0.4475, 'safety_margin_m': 0.15,
                    'forward_speed_max': 0.2, 'max_angular_speed': 0.3},
-    'safety': {'max_linear': 0.25, 'max_angular': 0.5, 'guard_margin_m': 0.15,
+    'safety': {'max_linear': 0.25, 'max_angular': 0.5, 'guard_margin_m': 0.15, 'no_go_lookahead_m': 0.25,
                'tilt_limits': [[25.0, 35.0], [50.0, 22.0]], 'tilt_slow_band_deg': 5.0,
                'tilt_slow_speed': 0.1, 'tilt_release_deg': 2.0},
 }

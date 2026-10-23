@@ -262,15 +262,17 @@ def test_payload(rig, payload, lanes, rows, profiles):
         time_s=round(samples[-1]['t'] - samples[0]['t'], 1), note=note)
 
 
-GUARD_CASES = {50.0: ['concrete_20', 'concrete_30', 'concrete_35'], 0.0: ['concrete_30']}
+GUARD_CASES = {50.0: ['concrete_20', 'concrete_30', 'concrete_35', 'gravel_30'], 0.0: ['concrete_30']}
 
 
 def guard_tests(rig, payload, rows):
-    """Tilt guard through the safety supervisor: the cases that tipped
-    (50 kg on 30/35 deg) and controls (50 kg on 20 deg, empty on 30 deg)."""
+    """Tilt guard + no-go zones (config/terrain_site.yaml) through the safety
+    supervisor: the cases that tipped or slid (50 kg on 30/35 deg) and
+    controls (50 kg on 20 deg, empty on 30 deg)."""
     def row(test, key, samples, reached, extra=''):
         surface, deg, y = LANES[key]
-        tipped = any(abs(math.degrees(s['pitch'])) > deg + TIP_MARGIN_DEG for s in samples)
+        tipped = rig.sup_tilt > deg + TIP_MARGIN_DEG or any(
+            max(abs(math.degrees(s['pitch'])), abs(math.degrees(s['roll']))) > deg + TIP_MARGIN_DEG for s in samples)
         r = {c: None for c in COLUMNS}
         r.update(payload_kg=payload, test=test, lane=key, surface=surface, mu=SURFACES[surface][0],
                  slope_deg=deg, speed=0.25, max_pitch_deg=peak(samples, 'pitch'),
@@ -288,19 +290,27 @@ def guard_tests(rig, payload, rows):
         rig.reset_sup()
         samples, reached = rig.run(0.25, lambda s: s['x'] > x1 + run / 2, 40.0)
         held = rig.hold(5.0)
+        front = samples[-1]['x'] + 0.3625
         row('guard_downhill', key, samples + held, reached,
-            f"; stopped at x={samples[-1]['x']:.2f} (slope starts at {x1:.2f})")
-        # placed on the slope with zero command (static case)
+            f"; stopped with its front {x1 - front:+.2f} m before the crest" if not reached else '')
+        # placed on the slope with zero command (static case), then: try to
+        # drive up (deeper into a no-go zone), then reverse back down and out
         d0 = RAMP_LEN / 4
         rig.place(X0 + d0 * math.cos(th), y, d0 * math.sin(th) + 0.1, pitch=-th)
         rig.reset_sup()
-        held = rig.hold(6.0)
-        row('guard_placed', key, held, False)
+        held = rig.hold(4.0)
+        x_start = rig.state['x']
+        up, _ = rig.run(0.25, lambda s: s['x'] > x_start + 0.5, 6.0)
+        moved_up = up[-1]['x'] - x_start
+        out, left = rig.run(-0.25, lambda s: s['x'] < X0 - 0.1, 40.0)
+        row('guard_placed', key, held + up + out, left,
+            f"; drove up {moved_up:+.2f} m when asked; reversed off the ramp: {'yes' if left else 'no'}")
         # climb from level ground
         rig.place(-1.5, y, 0.1)
         rig.reset_sup()
         samples, reached = rig.run(0.25, lambda s: s['x'] > X0 + run + 0.6, 60.0)
-        row('guard_climb', key, samples, reached, f"; got to x={samples[-1]['x']:.2f} of {X0 + run + 0.6:.2f}")
+        row('guard_climb', key, samples, reached,
+            f"; front {X0 - (samples[-1]['x'] + 0.3625):+.2f} m before the ramp foot" if not reached else '')
 
 
 def start_stack(payload, gui, supervisor=False):

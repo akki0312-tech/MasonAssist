@@ -60,6 +60,7 @@ source "$WS/install/setup.bash"
 set -u
 cd "$WS"
 export MASONASSIST_SITE_SOURCE=$SITE   # site_model.py: where known obstacles come from
+PAYLOAD_F=$(awk "BEGIN { printf \"%.2f\", $PAYLOAD }")   # ROS double parameter
 
 launch() {  # launch <name> <command...>
     local name=$1; shift
@@ -96,7 +97,7 @@ fi
 
 echo "[3/3] Mission server + dashboard..."
 launch mission_server python3 src/masonassist_description/scripts/mission_server.py \
-    --ros-args -p pose_topic:=/robot_pose -p odometry:=$ODOMETRY -p localization:=$LOCALIZATION
+    --ros-args -p pose_topic:=/robot_pose -p odometry:=$ODOMETRY -p localization:=$LOCALIZATION -p payload_kg:=$PAYLOAD_F
 for i in $(seq 1 30); do
     curl -s -m 2 -o /dev/null -w '%{http_code}' localhost:8080/api/state 2>/dev/null | grep -q 200 && break
     sleep 1

@@ -52,6 +52,20 @@ TILT_SLOW_SPEED = ROBOT['safety']['tilt_slow_speed']         # m/s - braking at 
 TILT_RELEASE_DEG = ROBOT['safety']['tilt_release_deg']       # hysteresis: a tilt stop releases below limit - this
 
 
+NO_GO_LOOKAHEAD_M = ROBOT['safety']['no_go_lookahead_m']
+
+
+def _inside(x, y, box):
+    cx, cy, hx, hy = box
+    return abs(x - cx) <= hx and abs(y - cy) <= hy
+
+
+def _depth(x, y, box):
+    """How far (x, y) is inside the box (<= 0: outside)."""
+    cx, cy, hx, hy = box
+    return min(hx - abs(x - cx), hy - abs(y - cy))
+
+
 def tilt_limit(payload_kg):
     (p0, t0), (p1, t1) = TILT_LIMITS
     if payload_kg <= p0:
@@ -70,8 +84,14 @@ def tilt_from_quaternion(x, y, z, w):
 
 class SafetySupervisorCore:
 
-    def __init__(self, require_operator_link=True, use_imu=False, payload_kg=0.0):
+    def __init__(self, require_operator_link=True, use_imu=False, payload_kg=0.0, zones=None):
+        """zones: {name: (cx, cy, hx, hy)} no-go zones that apply at this
+        payload (site_config.zones_blocking); needs the pose (on_pose)."""
         self.require_operator_link = require_operator_link
+        self.zones = dict(zones or {})
+        self.pose = None             # (x, y, yaw) in the map frame
+        self.pose_t = None
+        self.zone_hit = None         # name of the zone motion was blocked by
         self.use_imu = use_imu
         self.tilt_limit = tilt_limit(payload_kg)
         self.tilt = 0.0              # degrees, from the IMU
@@ -122,6 +142,25 @@ class SafetySupervisorCore:
         elif self.tilt < self.tilt_limit - TILT_RELEASE_DEG:
             self.tilt_stopped = self.tilt_override = False
 
+    def on_pose(self, x, y, yaw, now, sim_now=None):
+        self.pose = (x, y, yaw)
+        self.pose_t = (now, now if sim_now is None else sim_now)
+
+    def _zone_ahead(self, direction):
+        """Name of a no-go zone the body would enter moving forward (+1) or
+        backward (-1): probes across the leading edge, out to the lookahead."""
+        x, y, yaw = self.pose
+        c, s = math.cos(yaw), math.sin(yaw)
+        edge = BODY_FRONT_M if direction > 0 else -BODY_REAR_M
+        for along in (0.0, NO_GO_LOOKAHEAD_M / 2, NO_GO_LOOKAHEAD_M):
+            px = edge + direction * along
+            for py in (-BODY_HALF_WIDTH_M, 0.0, BODY_HALF_WIDTH_M):
+                wx, wy = x + c * px - s * py, y + s * px + c * py
+                for name, box in self.zones.items():
+                    if _inside(wx, wy, box):
+                        return name
+        return None
+
     def on_heartbeat(self, now):
         self.link_t = now
 
@@ -163,6 +202,8 @@ class SafetySupervisorCore:
             return 0.0, 0.0, 'stale_odom', False
         if self.use_imu and self._stale(self.imu_t, now, sim_now, SENSOR_TIMEOUT_S):
             return 0.0, 0.0, 'stale_imu', False
+        if self.zones and self._stale(self.pose_t, now, sim_now, SENSOR_TIMEOUT_S):
+            return 0.0, 0.0, 'stale_pose', False
         if self.require_operator_link and (self.link_t is None or now - self.link_t > LINK_TIMEOUT_S):
             return 0.0, 0.0, 'link_lost', False
         if self.use_imu and self.tilt_stopped and not self.tilt_override:
@@ -172,6 +213,19 @@ class SafetySupervisorCore:
 
         lin, ang = self.cmd
         max_lin = MAX_LINEAR
+        self.zone_hit = None
+        inside = [n for n, b in self.zones.items() if _inside(self.pose[0], self.pose[1], b)] if self.zones else []
+        if inside:
+            # already inside (e.g. placed there): only creep, and only in the
+            # direction that takes the robot out (depth into the zone shrinks)
+            max_lin = min(max_lin, TILT_SLOW_SPEED)
+            if lin != 0.0:
+                x, y, yaw = self.pose
+                d = NO_GO_LOOKAHEAD_M * (1 if lin > 0 else -1)
+                box = self.zones[inside[0]]
+                if _depth(x + d * math.cos(yaw), y + d * math.sin(yaw), box) >= _depth(x, y, box):
+                    self.zone_hit = inside[0]
+                    return 0.0, max(-MAX_ANGULAR, min(MAX_ANGULAR, ang)), 'no_go_zone', False
         if self.use_imu and (self.tilt_override or self.tilt >= self.tilt_limit - TILT_SLOW_BAND_DEG):
             max_lin = TILT_SLOW_SPEED
         clamped = abs(lin) > max_lin or abs(ang) > MAX_ANGULAR
@@ -180,4 +234,8 @@ class SafetySupervisorCore:
         if (lin > 0 and self.front_clear < GUARD_MARGIN_M) or \
                 (lin < 0 and self.rear_clear < GUARD_MARGIN_M):
             return 0.0, ang, 'collision_guard', clamped
+        if self.zones and lin != 0.0 and not inside:
+            self.zone_hit = self._zone_ahead(1 if lin > 0 else -1)
+            if self.zone_hit:
+                return 0.0, ang, 'no_go_zone', clamped
         return lin, ang, 'ok', clamped

@@ -33,6 +33,14 @@ keepouts:
   # taped-off area: only its two thin posts are solid
   safety_zone: [-1, 3.8, 0.3, 1.0]
 
+# No-go zones: areas a robot loaded above max_payload_kg must not enter - e.g.
+# the top of a steep descent. In the terrain tests a 50 kg load tipped the
+# robot over a 30-35 deg crest before any tilt sensor could react (docs/terrain).
+# The planner routes around them; the safety supervisor refuses to drive in.
+# This site is flat, so there are none. Example:
+#   steep_ramp: {box: [cx, cy, hx, hy], max_payload_kg: 25, reason: "30 deg descent"}
+no_go_zones: {}
+
 # Map cleanup: occupied cells to erase - SLAM speckle with nothing there in the
 # world (each > 1 m from every real object; 4 of the map's 3720 occupied
 # cells). One sat 0.41 m from the scaffold station. Done here rather than by

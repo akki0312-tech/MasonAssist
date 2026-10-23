@@ -26,6 +26,8 @@ safety:                    # safety supervisor
   max_linear: 0.25         # m/s, hard clamp
   max_angular: 0.5         # rad/s
   guard_margin_m: 0.15     # collision guard stopping margin beyond the body
+  no_go_lookahead_m: 0.25  # no-go zones: block motion this far ahead of the body
+                           # (stopping from 0.25 m/s at 0.5 m/s^2 ~0.06 m + margin)
   # tilt limit by payload [kg, deg], linear between (simulated terrain tests)
   tilt_limits: [[25.0, 35.0], [50.0, 22.0]]
   tilt_slow_band_deg: 5.0

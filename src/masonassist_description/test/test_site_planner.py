@@ -80,3 +80,17 @@ def test_learned_obstacle_is_routed_around(planner):
     finally:
         planner.set_dynamic(None)
     assert planner.plan(start, goal) == old        # no learned map -> unchanged behaviour
+
+
+def test_no_go_zone_detours_a_loaded_robot_only():
+    from eval_metrics import route_length
+    zone = {'slope': {'box': (-3.17, -2.9, 0.5, 0.4), 'max_payload_kg': 25.0, 'reason': 'test'}}
+    start, goal = STATIONS['dock'][:2], STATIONS['brick_pickup'][:2]
+    empty = SitePlanner(payload_kg=0.0, zones=zone)
+    loaded = SitePlanner(payload_kg=50.0, zones=zone)
+    plain = SitePlanner(zones={})
+    assert route_length(start, empty.plan(start, goal)) == pytest.approx(route_length(start, plain.plan(start, goal)))
+    detour = loaded.plan(start, goal)
+    assert detour is not None and route_length(start, detour) > route_length(start, plain.plan(start, goal)) + 0.3
+    sealed = SitePlanner(payload_kg=50.0, zones={'all': {'box': (-6.0, -4.5, 2.0, 1.5), 'max_payload_kg': 25.0}})
+    assert sealed.plan(start, goal) is None

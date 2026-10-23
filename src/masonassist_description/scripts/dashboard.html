@@ -197,6 +197,7 @@ let siteCells = [];        // SLAM map obstacle cells [[x,y]] (site source 'map'
 let siteCellSize = 0;
 let siteCellSet = new Set();
 let siteSource = 'layout';
+let noGoZones = [];        // [{name,cx,cy,hx,hy,max_payload_kg,reason,active}]
 let trail = [];            // client-accumulated odometry trajectory
 const TRAIL_MAX = 300;
 let stations = [];         // [{name,x,y,kind}] - fetched once
@@ -239,10 +240,12 @@ function renderSupervisor() {
     cancelled: 'STOPPED - cancelled', stale_scan: 'STOP - LiDAR data stale',
     stale_odom: 'STOP - odometry stale', link_lost: 'STOP - operator link lost',
     stale_cmd: 'zero - no navigation command', collision_guard: 'BLOCKED - obstacle at body',
-    tilt_limit: 'STOP - tilt limit (press Resume to creep off)', stale_imu: 'STOP - tilt sensor stale'};
+    tilt_limit: 'STOP - tilt limit (press Resume to creep off)', stale_imu: 'STOP - tilt sensor stale',
+    no_go_zone: 'BLOCKED - no-go zone for this load', stale_pose: 'STOP - pose stale (needed for no-go zones)'};
   const tilt = (s.tilt_deg !== null && s.tilt_deg !== undefined)
     ? ` · tilt ${s.tilt_deg.toFixed(1)}° (limit ${s.tilt_limit_deg.toFixed(0)}°)` : '';
-  el.textContent = (labels[s.reason] || s.reason) + (s.clamped ? ' (speed clamped)' : '') + tilt;
+  el.textContent = (labels[s.reason] || s.reason) + (s.zone ? ` (${s.zone})` : '') +
+    (s.clamped ? ' (speed clamped)' : '') + tilt;
   el.style.color = s.reason === 'ok' ? '#5fd38a' : (s.reason === 'stale_cmd' ? '' : '#ff6b6b');
 }
 
@@ -416,6 +419,7 @@ async function loadLayout() {
     siteCells = data.cells || [];
     siteCellSize = data.cell_size || 0;
     siteSource = data.source || 'layout';
+    noGoZones = data.no_go_zones || [];
     siteCellSet = new Set(siteCells.map(([x, y]) => cellKey(x, y)));
   } catch (e) {
     siteLayout = [];
@@ -481,6 +485,22 @@ function draw() {
     ctx.strokeRect(x0, y0, w, h);
   }
   ctx.setLineDash([]);
+
+  // no-go zones: red when they apply to the current load, grey otherwise
+  for (const z of noGoZones) {
+    const [x0, y0] = worldToPx(z.cx - z.hx, z.cy + z.hy);
+    const w = z.hx * 2 * PX_PER_M, h = z.hy * 2 * PX_PER_M;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x0, y0, w, h); ctx.clip();
+    ctx.strokeStyle = z.active ? 'rgba(255,92,77,0.7)' : 'rgba(154,164,181,0.5)';
+    for (let k = -h; k < w; k += 8) { ctx.beginPath(); ctx.moveTo(x0 + k, y0 + h); ctx.lineTo(x0 + k + h, y0); ctx.stroke(); }
+    ctx.restore();
+    ctx.strokeStyle = z.active ? '#ff5c4d' : '#9aa4b5';
+    ctx.strokeRect(x0, y0, w, h);
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.font = '10px sans-serif';
+    ctx.fillText(`no-go > ${z.max_payload_kg} kg`, x0 + 2, y0 + 11);
+  }
 
   // learned obstacles (live map: seen by LiDAR, not in the known layout, persistent)
   if (latestState.live_map && latestState.live_map.cells) {

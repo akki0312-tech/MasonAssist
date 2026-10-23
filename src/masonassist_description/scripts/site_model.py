@@ -20,16 +20,9 @@ import os
 import numpy as np
 import yaml
 
+from site_config import load_no_go_zones, site_config_path, zones_blocking  # noqa: F401
+
 PGM_FREE = 254                  # map_saver trinary values: 0 occupied, 205 unknown
-
-
-def _package_dir():
-    here = os.path.dirname(os.path.realpath(__file__))
-    for candidate in (os.path.join(here, '..'),                                    # source tree
-                      os.path.join(here, '..', '..', 'share', 'masonassist_description')):
-        if os.path.exists(os.path.join(candidate, 'config', 'site.yaml')):
-            return os.path.normpath(candidate)
-    raise FileNotFoundError('config/site.yaml not found next to the scripts or in the install share')
 
 
 def _box_clearance(xs, ys, boxes):
@@ -131,8 +124,7 @@ class MapSite:
 
 def load_site(config_path=None, source=None):
     """(site model, config dict) from config/site.yaml (or the overrides)."""
-    config_path = config_path or os.environ.get('MASONASSIST_SITE_CONFIG') or \
-        os.path.join(_package_dir(), 'config', 'site.yaml')
+    config_path = site_config_path(config_path)
     cfg = yaml.safe_load(open(config_path))
     source = source or os.environ.get('MASONASSIST_SITE_SOURCE') or cfg.get('source', 'layout')
     keepouts = {n: tuple(b) for n, b in (cfg.get('keepouts') or {}).items()}

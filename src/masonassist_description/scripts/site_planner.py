@@ -26,7 +26,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from site_model import BOUNDS, SITE  # noqa: E402
+from site_model import BOUNDS, SITE, _box_clearance, load_no_go_zones, zones_blocking  # noqa: E402
 
 RESOLUTION_M = 0.1
 INFLATION_M = 0.7             # VFH+ r_effective (0.5975 m) + 0.1 m margin: at exactly
@@ -40,7 +40,9 @@ def _blocked(x, y, inflation=INFLATION_M):
 
 class SitePlanner:
 
-    def __init__(self, resolution=RESOLUTION_M, inflation=INFLATION_M, site=None):
+    def __init__(self, resolution=RESOLUTION_M, inflation=INFLATION_M, site=None, payload_kg=0.0, zones=None):
+        """payload_kg: no-go zones (config/site.yaml) whose max_payload_kg is
+        below it are planned around like obstacles. zones: override them."""
         self.res = resolution
         self.inflation = inflation
         lo, hi = BOUNDS
@@ -49,6 +51,9 @@ class SitePlanner:
         xs = lo + np.arange(self.n) * resolution
         gx, gy = np.meshgrid(xs, xs, indexing='ij')
         self.free = (site or SITE).clearance(gx, gy) >= inflation      # [i][j] = (x_i, y_j)
+        self.no_go = zones_blocking(load_no_go_zones() if zones is None else zones, payload_kg)
+        if self.no_go:
+            self.free &= _box_clearance(gx, gy, self.no_go.values()) >= inflation
         self.dynamic = None   # bool grid: learned obstacles (live_map), already inflated
 
     def set_dynamic(self, mask):
@@ -121,7 +126,10 @@ class SitePlanner:
         """Waypoints from start to goal (goal included, start excluded), or
         None if no route exists. If start/goal sit inside the inflated
         margin (e.g. robot already close to a wall), the search begins/ends
-        at the nearest free cell, and the exact goal is still appended."""
+        at the nearest free cell, and the exact goal is still appended. A goal
+        inside a no-go zone that applies to this payload has no route."""
+        if self.no_go and _box_clearance(goal[0], goal[1], self.no_go.values()) == 0.0:
+            return None
         s = self._nearest_free(self._cell(*start))
         g = self._nearest_free(self._cell(*goal))
         if s is None or g is None:

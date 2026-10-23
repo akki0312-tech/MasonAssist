@@ -58,5 +58,9 @@ install(
     scripts/odom_drift_core.py
     scripts/payload_model.py
     scripts/robot_config.py
+    scripts/safety_zones.py
+    scripts/site_model.py
+    scripts/site_config.py
+    scripts/worker_mover.py
   DESTINATION lib/${PROJECT_NAME}
 )

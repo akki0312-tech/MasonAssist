@@ -1,0 +1,16 @@
+payload_kg,test,lane,surface,mu,slope_deg,speed,result,time_s,slip,max_pitch_deg,max_roll_deg,stop_dist_m,slide_m,side_drift_m_per_m,note
+50.0,guard_downhill,concrete_20,concrete,1.0,20,0.25,reached,,,28.4,,,,,"supervisor: ok,tilt_limit; max tilt 28.4°"
+50.0,guard_placed,concrete_20,concrete,1.0,20,0.25,stopped,,,20.4,,,,,supervisor: tilt_limit; max tilt 20.4°; drove up +0.00 m when asked; reversed off the ramp: no
+50.0,guard_climb,concrete_20,concrete,1.0,20,0.25,reached,,,20.4,,,,,supervisor: ok; max tilt 20.4°
+50.0,guard_downhill,concrete_30,concrete,1.0,30,0.25,stopped,,,0.4,,,,,"supervisor: no_go_zone,ok; max tilt 0.4°; stopped with its front +0.18 m before the crest"
+50.0,guard_placed,concrete_30,concrete,1.0,30,0.25,TIPPED,,,59.8,,,,,supervisor: tilt_limit; max tilt 59.8°; drove up -0.00 m when asked; reversed off the ramp: no
+50.0,guard_climb,concrete_30,concrete,1.0,30,0.25,stopped,,,0.4,,,,,"supervisor: no_go_zone,ok; max tilt 0.4°; front +0.18 m before the ramp foot"
+50.0,guard_downhill,concrete_35,concrete,1.0,35,0.25,stopped,,,0.4,,,,,"supervisor: no_go_zone,ok; max tilt 0.4°; stopped with its front +0.18 m before the crest"
+50.0,guard_placed,concrete_35,concrete,1.0,35,0.25,TIPPED,,,6.1,,,,,supervisor: tilt_limit; max tilt 177.4°; drove up +0.00 m when asked; reversed off the ramp: yes (re-classified: the robot rolled over while settling after placement; the run predates the roll-aware tip check)
+50.0,guard_climb,concrete_35,concrete,1.0,35,0.25,stopped,,,0.4,,,,,"supervisor: no_go_zone,ok; max tilt 0.4°; front +0.17 m before the ramp foot"
+50.0,guard_downhill,gravel_30,gravel,0.6,30,0.25,stopped,,,0.4,,,,,"supervisor: no_go_zone,ok; max tilt 0.4°; stopped with its front +0.18 m before the crest"
+50.0,guard_placed,gravel_30,gravel,0.6,30,0.25,stopped,,,30.2,,,,,supervisor: tilt_limit; max tilt 30.2°; drove up +0.00 m when asked; reversed off the ramp: no
+50.0,guard_climb,gravel_30,gravel,0.6,30,0.25,stopped,,,0.4,,,,,"supervisor: no_go_zone,ok; max tilt 0.4°; front +0.18 m before the ramp foot"
+0.0,guard_downhill,concrete_30,concrete,1.0,30,0.25,reached,,,33.1,,,,,supervisor: ok; max tilt 33.1°
+0.0,guard_placed,concrete_30,concrete,1.0,30,0.25,reached,,,30.4,,,,,supervisor: ok; max tilt 30.4°; drove up +0.50 m when asked; reversed off the ramp: yes
+0.0,guard_climb,concrete_30,concrete,1.0,30,0.25,reached,,,30.4,,,,,supervisor: ok; max tilt 30.4°

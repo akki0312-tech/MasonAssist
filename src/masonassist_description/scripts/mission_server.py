@@ -28,7 +28,7 @@ from std_msgs.msg import String
 # The dashboard's "known site" overlay comes from the same site model the
 # planner and safety zones use (authored layout or SLAM map + keep-outs).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from site_model import SITE  # noqa: E402
+from site_model import SITE, load_no_go_zones  # noqa: E402
 from transport_mission import (  # noqa: E402
     MISSIONS, STATIONS, TransportMission, custom_job_spec, validate_goal,
 )
@@ -92,7 +92,8 @@ class MissionServerNode(Node):
         self.mission = None  # TransportMission or None
         self.queue = JobQueue()
         self.job_mission = None  # the TransportMission running queue.current, if any
-        self.planner = SitePlanner()
+        # routes avoid the no-go zones (config/site.yaml) that apply to the load
+        self.planner = SitePlanner(payload_kg=float(self.declare_parameter('payload_kg', 0.0).value))
         self.create_timer(0.2, self._mission_tick)
         self.live_map = LiveMap()
         self.last_scan_raw = None
@@ -379,8 +380,12 @@ def make_handler(node: MissionServerNode):
                 # The site model the planner and safety zones use: layout
                 # boxes, or SLAM map obstacle cells plus keep-out boxes.
                 items = SITE.draw_items()
+                zones = [{'name': n, 'cx': z['box'][0], 'cy': z['box'][1], 'hx': z['box'][2], 'hy': z['box'][3],
+                          'max_payload_kg': z['max_payload_kg'], 'reason': z['reason'],
+                          'active': n in node.planner.no_go}
+                         for n, z in load_no_go_zones().items()]
                 self._send_json({'source': SITE.source, 'obstacles': items['boxes'],
-                                 'cells': items['cells'], 'cell_size': items['cell_size']})
+                                 'cells': items['cells'], 'cell_size': items['cell_size'], 'no_go_zones': zones})
             elif self.path == '/api/stations':
                 self._send_json({
                     'stations': [{'name': n, 'x': x, 'y': y, 'kind': k}

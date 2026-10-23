@@ -15,9 +15,9 @@ This is a **simulation project**. Nothing here has run on physical hardware.
 | Navigation | 11/11 runs complete across fixed jobs, a custom job, a 5-goal tour and an unmapped box dropped on the route; repeatable to about 1 s and 2 cm | [Navigation evaluation](#navigation-evaluation) |
 | Localisation | odometry drifts like real track odometry (up to 4 m); with a SLAM map and AMCL, 6/6 jobs complete with 2–4 cm mean / 9 cm max pose error. Without localisation, 0/6 | [Localisation](#localisation-slam-map--amcl-vs-drifting-odometry) |
 | Safety | an independent supervisor has the final say on every command. Every check was triggered live; a frozen navigation node, LiDAR relay, mission server or supervisor each stops the robot. An IMU tilt guard stops a loaded robot climbing or standing on slopes beyond its limit | [Safety supervisor](#safety-supervisor), [verification log](docs/VERIFICATION.md#safety), [tilt guard](docs/terrain/supervisor_guard.md) |
-| Payload & terrain | 0–25 kg: no effect on slopes up to 30° concrete / 20° gravel and clay. 50 kg tips on 30–35°: the tilt guard prevents climbing or standing there, but not rolling over a crest onto a steep descent | [Payload & terrain](#payload--terrain-simulation) |
+| Payload & terrain | 0–25 kg: no effect on slopes up to 30° concrete / 20° gravel and clay. 50 kg tips on 30–35°. The tilt guard catches being on such a slope; **no-go zones** marked on the site stop the loaded robot 0.18 m before the crest, so it no longer tips | [Payload & terrain](#payload--terrain-simulation) |
 | Hardware-ready | robot and site described in two config files; the robot plans on its SLAM map (7/7 runs, same as the authored layout) | [Planning on the SLAM map](#planning-on-the-slam-map), [Running on a real robot](#running-on-a-real-robot) |
-| Tests | 240 unit tests; reproducible evaluation tools for navigation, mapping and terrain | [Tests](#tests) |
+| Tests | 246 unit tests; reproducible evaluation tools for navigation, mapping and terrain | [Tests](#tests) |
 
 Every result comes from tools in this repository and can be re-run (`tools/`). The raw data is in `docs/`.
 
@@ -168,9 +168,11 @@ Navigation never drives the robot directly. `vfh_plus_node` publishes `/cmd_vel_
 | LiDAR return within 0.15 m of the body in the direction of travel — rotation still allowed | `collision_guard` |
 | `/imu` older than 0.5 s | `stale_imu` |
 | Tilt (IMU) at or above the payload's limit: 35° up to 25 kg, 22° at 50 kg. Released 2° below the limit; Resume allows creeping off at 0.1 m/s | `tilt_limit` |
+| The body's leading edge, plus 0.25 m, would enter a no-go zone (from `site.yaml`) that applies to this payload. Rotation is allowed; a robot already inside may only creep out | `no_go_zone` |
+| `/robot_pose` older than 0.5 s, when no-go zones apply | `stale_pose` |
 
 - **Speed limits:** speeds above 0.25 m/s / 0.5 rad/s are clamped, and to 0.1 m/s within 5° of the tilt limit.
-- **Tilt limits** come from the terrain tests below. They stop a loaded robot climbing or standing on a slope that's too steep. They can't prevent rolling over a crest onto a steep descent, because the tilt only rises once the robot is already going over ([details](docs/terrain/supervisor_guard.md)).
+- **Tilt limits** come from the terrain tests below. They stop a loaded robot climbing or standing on a slope that's too steep. They can't prevent rolling over a crest onto a steep descent, because the tilt only rises once the robot is already going over. That's what **no-go zones** are for: steep slopes marked in advance in `site.yaml`, with a payload limit. The planner routes around them, and the supervisor won't drive into them ([details](docs/terrain/supervisor_guard.md)).
 - **Independence:** it runs separately from navigation, with its own rules in `safety_supervisor_core.py`, so a hung, crashed or misbehaving navigation node can't keep the robot moving.
 - **Sim time:** command and sensor ages are measured in sim time (which is wall time on a real robot), with a 1.0 s wall-clock backstop. With the Gazebo window open, the simulation itself sometimes pauses, for up to 0.82 s of wall time in which only about 0.12 s of sim time passes. The robot can't move during those pauses, so they don't count as stale. Judged in wall time, they caused up to 11 false stops per mission.
 - **Backstop below the supervisor:** the track controllers stop the tracks if no command has arrived for 0.5 s.
@@ -192,6 +194,7 @@ Navigation never drives the robot directly. `vfh_plus_node` publishes `/cmd_vel_
 | Coloured squares | Stations: storage (orange), delivery (green), dock (grey) |
 | Cyan triangle | The robot and its heading — where it thinks it is |
 | Faint grey triangle | Where the robot really is (simulator ground truth) |
+| Red hatched boxes | No-go zones for the current load (grey when the load is under the zone's limit) |
 | P / D circles | Pick-up / drop-off points chosen for a custom job |
 
 Click anywhere on the map to send the robot there. Points outside the site or inside an obstacle are rejected with the reason shown.
@@ -312,7 +315,7 @@ What the results show:
 - **Up to 25 kg the robot is unaffected.** It handled every slope up to 30° on concrete and up to 20° on gravel and clay, with no slip, no slide-back and 7–10 cm stopping distances.
 - **50 kg is the limit case.** The load's centre sits about 0.43 m above the ground. Braking down a 30° slope, or simply standing on 35°, tipped the robot over (pitch about 90°). On 30° gravel it slid 1.3 m before stopping.
 - **Operating limit taken from these results:** with a 50 kg load, stay on slopes of 20° or less; empty or at 25 kg, up to 30° on concrete.
-- **The safety supervisor's IMU tilt guard enforces part of this** ([results](docs/terrain/supervisor_guard.md)). With 50 kg it stops the robot climbing onto 30° and holds it when it's standing on 30–35°, while loaded 20° slopes and the empty robot on 30° are unaffected. It **can't** prevent the crest roll-over: with 50 kg, driving off the plateau onto 30° or 35° tipped the robot whether at a constant 0.1 m/s, at 0.25 m/s, with or without a stop. The tip happens as it rolls over the edge, before the tilt reaches the limit. Avoiding it needs the slope known in advance (a mapped no-go zone, or a sensor that sees a drop-off), so for steep descents with a heavy load, the 20° rule stays a site rule.
+- **The safety supervisor's IMU tilt guard enforces part of this** ([results](docs/terrain/supervisor_guard.md)). With 50 kg it stops the robot climbing onto 30° and holds it when it's standing on 30–35°, while loaded 20° slopes and the empty robot on 30° are unaffected. It **can't** prevent the crest roll-over: with 50 kg, driving off the plateau onto 30° or 35° tipped the robot whether at a constant 0.1 m/s, at 0.25 m/s, with or without a stop. The tip happens as it rolls over the edge, before the tilt reaches the limit. Avoiding it needs the slope known in advance. **No-go zones** do that: with every ramp of 30° or more marked as a zone for loads over 25 kg, the 50 kg robot stopped **0.18 m before the crest** of the 30° and 35° concrete and 30° gravel descents, still level, instead of tipping or sliding. The empty robot and loaded 20° slopes were unaffected ([results](docs/terrain/supervisor_guard.md#no-go-zones-added-after-the-tilt-guard)).
 - **Approach corners:** climbs from level ground onto 35° concrete and 30° gravel stalled at the sharp corner where the ground meets the ramp, even empty. Placed directly on those slopes, it held and drove up. That's an approach-geometry limit, not a grip limit.
 - **Why the drive has acceleration limits:** this test first showed the tracks changing speed instantly (stopping in under 2 cm from 0.25 m/s). The drive now accelerates and brakes at 0.5 m/s², about 7 cm to stop.
 - **This is a rough model.** It uses Coulomb friction, where weight cancels out of grip, which is why payload mostly matters through tipping. Real tracks on soil also sink and shear, and real motors have torque limits. Read these numbers as relative, not absolute.
@@ -357,7 +360,7 @@ The logic doesn't change: navigation, safety supervisor, missions, dashboard, SL
   Copy it, measure the real robot, and set `MASONASSIST_ROBOT_CONFIG=/path/robot.yaml`.
 - **`config/site.yaml`:**
   1. Build a map of the site: drive the robot around with `localization:=slam`, as `tools/build_map.py` does in simulation.
-  2. Draw keep-outs for anything lower than the LiDAR or off-limits.
+  2. Draw keep-outs for anything lower than the LiDAR or off-limits, and no-go zones (with a payload limit) over steep slopes.
   3. Erase speckle.
   4. Set the stations and missions.
   
@@ -414,7 +417,7 @@ curl -X POST localhost:8080/api/queue -H 'Content-Type: application/json' \
 | `/cmd_vel_nav` | `geometry_msgs/Twist` | `vfh_plus_node` → `safety_supervisor` |
 | `/cmd_vel` | `geometry_msgs/Twist` | `safety_supervisor` → bridge → TrackedVehicle (20 Hz, always) |
 | `/operator_heartbeat` | `std_msgs/String` | `mission_server` → `safety_supervisor` (2 Hz) |
-| `/supervisor_status` | `std_msgs/String` (JSON) | `safety_supervisor` → `mission_server`: `reason`, `clamped`, `front_clear_m`, `tilt_deg`, `tilt_limit_deg` |
+| `/supervisor_status` | `std_msgs/String` (JSON) | `safety_supervisor` → `mission_server`: `reason`, `clamped`, `front_clear_m`, `tilt_deg`, `tilt_limit_deg`, `zone` |
 | `/goal_pose` | `geometry_msgs/Point` | `mission_server` → `vfh_plus_node` (one waypoint at a time) |
 | `/mission_cmd` | `std_msgs/String` | `pause`, `resume`, `cancel`, `estop`, `clear_estop` (read by `vfh_plus_node` and `safety_supervisor`) |
 | `/mission_status` | `std_msgs/String` | `vfh_plus_node` → `mission_server` |
@@ -430,9 +433,9 @@ source /opt/ros/jazzy/setup.bash && source install/setup.bash
 python3 -m pytest src/masonassist_description/test/
 ```
 
-240 tests covering:
+246 tests covering:
 - the VFH+ core and node, and LiDAR self-occlusion handling;
-- safety zones and the safety supervisor, including the tilt guard;
+- safety zones and the safety supervisor, including the tilt guard and no-go zones;
 - the A\* planner, the live obstacle map, the mission sequencer and the job queue;
 - the robot and site config files, and the SLAM-map site model (keep-outs, cleanup, every leg routable on the map);
 - world-vs-obstacle-registry consistency;
@@ -445,7 +448,7 @@ python3 -m pytest src/masonassist_description/test/
 ## Limitations
 
 - **Simulation only** — no hardware testing.
-- **Tilt guard only reacts** — the IMU tilt guard can stop a loaded robot on a slope that's too steep, but it can't see a slope coming, so it can't prevent rolling over a crest onto a steep descent. The 2D LiDAR doesn't see slopes either (it sees ramps as walls). For heavy loads, steep descents are a site rule. In simulation, Gazebo's IMU orientation is exact.
+- **Slopes must be marked** — the IMU tilt guard only reacts once the robot is on a slope, and the 2D LiDAR doesn't see slopes (it sees ramps as walls). Crest roll-over is prevented only where a steep slope is marked as a no-go zone in `site.yaml`; an unmarked steep descent is still dangerous with a heavy load. In simulation, Gazebo's IMU orientation is exact.
 - **Odometry drift is modelled, not physical** — `odom_drift` adds track-odometry-style errors to the simulator's true motion. A real robot's drift will have its own character, and AMCL's noise parameters may need retuning.
 - **Keep-outs are hand-made** — planning uses the SLAM map, but a 2D LiDAR can't map objects lower than its scan plane, so those are keep-out boxes in `config/site.yaml`. Here they come from the simulation's knowledge of the world; on a real site an operator draws them. Anything new and low that nobody drew is invisible to the robot. There is no Nav2. The live map only learns objects that stay put for 4 s.
 - **Start pose is known** — AMCL starts at the dock. There is no global relocalisation if the robot is started elsewhere.
@@ -479,7 +482,8 @@ src/masonassist_description/
   worlds/terrain_test.world             ramp lanes (slope x surface) and a side slope
   maps/construction_site.{yaml,pgm}     SLAM map of the site (AMCL localises on it)
   config/robot.yaml                     robot parameters (body, LiDAR, speeds, tilt limits)
-  config/site.yaml                      site: obstacle source (SLAM map / layout), keep-outs, stations, missions
+  config/site.yaml                      site: obstacle source (SLAM map / layout), keep-outs, no-go zones, stations, missions
+  config/terrain_site.yaml              no-go zones for the terrain test world (generated)
   config/amcl.yaml, slam_mapping.yaml   localisation and mapping parameters
   scripts/
     vfh_plus_core.py                    VFH+ algorithm (ROS-free)
@@ -498,6 +502,7 @@ src/masonassist_description/
     map_pose_publisher.py               /robot_pose = map->odom (AMCL) + /odom
     robot_config.py                     loads config/robot.yaml (ROS-free)
     site_model.py                       site obstacles from the SLAM map + keep-outs, or the authored layout (ROS-free)
+    site_config.py                      site config path + no-go zones (ROS-free, light)
     payload_model.py                    loaded pallet link for the robot model (ROS-free)
     eval_metrics.py                     evaluation metrics: path length, clearance, arrival error, map quality (ROS-free)
     scan_frame_fix.py, odom_to_tf_broadcaster.py   LiDAR frame and TF helpers

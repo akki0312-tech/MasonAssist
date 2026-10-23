@@ -30,3 +30,31 @@ Commanded speed: 0.25 m/s. Data: [supervisor_guard.csv](supervisor_guard.csv). R
 - **Loaded 20° slopes are unaffected.** With 50 kg it climbs, holds and descends 20° (tilt reads 20.4°).
 - **It cannot prevent tipping over a crest.** With 50 kg, driving off the plateau onto a 30° or 35° descent tipped the robot every time. That held with the guard; at a constant 0.1 m/s or 0.25 m/s with no stop at all; and when stopping half way down at 0.1 m/s. The tip happens as the robot rolls over the convex edge, when the high load swings it nose-down, so speed and braking make no difference. On the flat plateau the tilt reads 0°, and by the time it reaches the limit the robot is already falling. Preventing this needs knowledge of the slope *before* reaching it: a mapped no-go zone for steep descents when loaded, or a sensor that detects a drop-off ahead.
 - **Simulation only:** the track and friction model is approximate. The numbers are relative, not absolute.
+
+## No-go zones (added after the tilt guard)
+
+The tilt guard can't prevent the crest roll-over, so steep slopes are now marked in advance. `config/terrain_site.yaml` makes every ramp of 30° or more a **no-go zone for loads above 25 kg**, and it is generated with the world by `tools/make_terrain_world.py`. The supervisor blocks motion whose leading edge (plus 0.25 m) would enter a zone, and the planner routes around zones. Same harness and commands as above; data: [supervisor_zones.csv](supervisor_zones.csv).
+
+| Payload | Lane | Test | Result | Max pitch | Supervisor |
+|---|---|---|---|---|---|
+| 50 kg | concrete_20 | downhill | reached | 28.4° | supervisor: ok,tilt_limit; max tilt 28.4° |
+| 50 kg | concrete_20 | placed | stopped | 20.4° | supervisor: tilt_limit; max tilt 20.4°; drove up +0.00 m when asked; reversed off the ramp: no |
+| 50 kg | concrete_20 | climb | reached | 20.4° | supervisor: ok; max tilt 20.4° |
+| 50 kg | concrete_30 | downhill | stopped | 0.4° | supervisor: no_go_zone,ok; max tilt 0.4°; stopped with its front +0.18 m before the crest |
+| 50 kg | concrete_30 | placed | TIPPED | 59.8° | supervisor: tilt_limit; max tilt 59.8°; drove up -0.00 m when asked; reversed off the ramp: no |
+| 50 kg | concrete_30 | climb | stopped | 0.4° | supervisor: no_go_zone,ok; max tilt 0.4°; front +0.18 m before the ramp foot |
+| 50 kg | concrete_35 | downhill | stopped | 0.4° | supervisor: no_go_zone,ok; max tilt 0.4°; stopped with its front +0.18 m before the crest |
+| 50 kg | concrete_35 | placed | TIPPED | 6.1° | supervisor: tilt_limit; max tilt 177.4°; drove up +0.00 m when asked; reversed off the ramp: yes (re-classified: the robot rolled over while settling after placement; the run predates the roll-aware tip check) |
+| 50 kg | concrete_35 | climb | stopped | 0.4° | supervisor: no_go_zone,ok; max tilt 0.4°; front +0.17 m before the ramp foot |
+| 50 kg | gravel_30 | downhill | stopped | 0.4° | supervisor: no_go_zone,ok; max tilt 0.4°; stopped with its front +0.18 m before the crest |
+| 50 kg | gravel_30 | placed | stopped | 30.2° | supervisor: tilt_limit; max tilt 30.2°; drove up +0.00 m when asked; reversed off the ramp: no |
+| 50 kg | gravel_30 | climb | stopped | 0.4° | supervisor: no_go_zone,ok; max tilt 0.4°; front +0.18 m before the ramp foot |
+| 0 kg | concrete_30 | downhill | reached | 33.1° | supervisor: ok; max tilt 33.1° |
+| 0 kg | concrete_30 | placed | reached | 30.4° | supervisor: ok; max tilt 30.4°; drove up +0.50 m when asked; reversed off the ramp: yes |
+| 0 kg | concrete_30 | climb | reached | 30.4° | supervisor: ok; max tilt 30.4° |
+
+- **Crest roll-over prevented.** With 50 kg, driving toward the 30° and 35° concrete descents and the 30° gravel descent, the robot stopped **0.18 m before the crest**, still level (tilt 0.4°). Without zones these tipped (concrete) or slid 1.3 m (gravel).
+- **Climbing:** it also stops 0.17–0.18 m before the foot of those ramps.
+- **Unaffected cases:** 20° slopes with 50 kg (no zone there) and the empty robot on 30° (zones only apply above 25 kg).
+- **"Placed on the slope" with 50 kg is not a meaningful case any more.** Teleporting the loaded robot directly onto 30° and 35° tipped it twice while it was settling, before any command was sent. Once on such a slope, the tilt guard holds it until an operator presses Resume, so it did not reverse off by itself. With zones the robot never gets onto those slopes loaded. The exit rule (a robot inside a zone may only creep out) is covered by unit tests.
+- **Unmapped slopes are still a gap:** the zones only protect slopes someone has marked.

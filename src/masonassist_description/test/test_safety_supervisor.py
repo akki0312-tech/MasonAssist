@@ -294,3 +294,62 @@ def test_stale_imu_stops_when_imu_is_used():
     s.on_nav_cmd(0.2, 0.0, 0.6)
     assert s.output(0.6)[:3] == (0.0, 0.0, 'stale_imu')
     assert SafetySupervisorCore().use_imu is False      # off unless enabled (older setups)
+
+
+# ---------------------------------------------------------------------------
+# no-go zones
+# ---------------------------------------------------------------------------
+
+from safety_supervisor_core import BODY_FRONT_M, BODY_REAR_M, NO_GO_LOOKAHEAD_M  # noqa: E402
+
+ZONE = {'steep_descent': (5.0, 0.0, 1.0, 1.0)}          # x 4..6, y -1..1
+
+
+def _zoned(x, y, yaw, cmd=0.2, zones=ZONE):
+    s = SafetySupervisorCore(zones=zones)
+    s.on_scan(_ranges(), A_MIN, INC, 0.0)
+    s.on_odom(0.0)
+    s.on_heartbeat(0.0)
+    s.on_pose(x, y, yaw, 0.0)
+    s.on_nav_cmd(cmd, 0.1, 0.0)
+    return s
+
+
+def test_driving_toward_a_zone_is_stopped_before_it():
+    # front edge at x = 4 - lookahead/2: inside the lookahead
+    x = 4.0 - BODY_FRONT_M - NO_GO_LOOKAHEAD_M / 2
+    s = _zoned(x, 0.0, 0.0)
+    assert s.output(0.1) == (0.0, 0.1, 'no_go_zone', False) and s.zone_hit == 'steep_descent'
+    # further away: fine
+    assert _zoned(x - 1.0, 0.0, 0.0).output(0.1)[2] == 'ok'
+
+
+def test_reversing_into_a_zone_is_stopped_and_away_is_allowed():
+    x = 4.0 - BODY_REAR_M - NO_GO_LOOKAHEAD_M / 2          # facing away (yaw pi), backing toward it
+    assert _zoned(x, 0.0, math.pi, cmd=-0.2).output(0.1)[2] == 'no_go_zone'
+    assert _zoned(x, 0.0, math.pi, cmd=0.2).output(0.1)[2] == 'ok'
+    assert _zoned(x, 0.0, 0.0, cmd=-0.2).output(0.1)[2] == 'ok'   # backing away from it
+
+
+def test_inside_a_zone_only_creeping_out_is_allowed():
+    s = _zoned(4.3, 0.0, 0.0, cmd=0.25)                     # inside near the west edge, facing in
+    assert s.output(0.1)[2] == 'no_go_zone'                 # deeper: no
+    s.on_nav_cmd(-0.25, 0.0, 0.0)
+    assert s.output(0.1) == (-TILT_SLOW_SPEED, 0.0, 'ok', True)   # back out, at creep speed
+
+
+def test_no_zones_or_stale_pose():
+    assert _zoned(3.0, 0.0, 0.0, zones={}).output(0.1)[2] == 'ok'
+    s = _zoned(0.0, 0.0, 0.0)
+    s.on_scan(_ranges(), A_MIN, INC, 0.6)
+    s.on_odom(0.6)
+    s.on_heartbeat(0.6)
+    s.on_nav_cmd(0.2, 0.0, 0.6)
+    assert s.output(0.6)[2] == 'stale_pose'
+
+
+def test_zone_payload_filtering():
+    from site_config import zones_blocking
+    zones = {'a': {'box': ZONE['steep_descent'], 'max_payload_kg': 25.0, 'reason': ''}}
+    assert zones_blocking(zones, 0.0) == {} and zones_blocking(zones, 25.0) == {}
+    assert zones_blocking(zones, 50.0) == {'a': ZONE['steep_descent']}
