@@ -1,0 +1,56 @@
+# MasonAssist site description. For a real site: build a map there
+# (tools/build_map.py), draw keep-outs for what the 2D LiDAR can't see or the
+# robot must not enter, and set the stations - then source: map. Override the
+# file with MASONASSIST_SITE_CONFIG, the source with MASONASSIST_SITE_SOURCE.
+
+# Where the planner, the 'unmapped return = possible person' check, the live
+# map and goal validation get the site's obstacles from:
+#   map    - the SLAM map below (occupied + never-seen cells) plus the keep-outs
+#   layout - the simulation's authored obstacle list (worker_mover.OBSTACLES)
+source: map
+map: maps/construction_site.yaml       # relative to the package
+bounds: [-8.0, 8.0]                     # square site extent, metres
+
+# Keep-out boxes [centre x, centre y, half x, half y]: obstacles the SLAM map
+# can't represent fully. On a real site an operator draws these on the map.
+# test_site_model checks that every object lower than 0.5 m is a keep-out and
+# that no object can be routed through on the map.
+keepouts:
+  # lower than 0.5 m: the 2D LiDAR (0.27 m) sees at most their top
+  cement_bags: [0, -7, 0.75, 0.65]
+  timber_stack: [6, -7, 1.15, 0.65]
+  rubble_1: [-2, 3, 0.3, 0.35]
+  rubble_2: [-1.6, 3.3, 0.25, 0.25]
+  sand_pile: [-4.5, -7, 0.65, 0.65]
+  aggregate_pile: [1.5, -7, 0.6, 0.6]
+  # pallet bases (0.15 m) stick out ~0.15 m beyond the visible stacks
+  pallet_bricks: [-6, -7, 0.75, 0.65]
+  pallet_blocks: [-3, -7, 0.75, 0.65]
+  # mapped only as thin posts / partly: pipes lie mostly low, the barrier is a diagonal
+  pipe_pile: [3, -7, 0.75, 0.85]
+  barrier_1: [2, -3, 0.75, 0.75]
+  scaffold_1: [2.2, 3.5, 0.4, 0.7]
+  # taped-off area: only its two thin posts are solid
+  safety_zone: [-1, 3.8, 0.3, 1.0]
+
+# Map cleanup: occupied cells to erase - SLAM speckle with nothing there in the
+# world (each > 1 m from every real object; 4 of the map's 3720 occupied
+# cells). One sat 0.41 m from the scaffold station. Done here rather than by
+# filtering isolated cells automatically, which would also erase thin real
+# objects such as posts. On a real site: an operator cleaning the map.
+erase: [[0.61, 4.72], [3.01, 0.62], [-5.74, -0.28], [-0.14, -3.67]]
+
+stations:                               # name: [x, y, kind]
+  dock: [0.0, 0.0, dock]
+  brick_pickup: [-6.0, -4.5, storage]
+  block_pickup: [-3.0, -4.5, storage]
+  building_door: [5.2, 1.25, delivery]
+  scaffold: [1.0, 4.6, delivery]
+
+missions:                               # legs: [station, load | unload | travel]
+  bricks_to_building:
+    material: bricks
+    legs: [[brick_pickup, load], [building_door, unload], [dock, travel]]
+  blocks_to_scaffold:
+    material: blocks
+    legs: [[block_pickup, load], [scaffold, unload], [dock, travel]]

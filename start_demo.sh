@@ -11,6 +11,8 @@
 #   --localization=amcl|none|slam (default amcl)
 #                               none = pose is odometry; slam = build a new map
 #                               (slam_toolbox); amcl = localise on the saved map
+#   --site=map|layout           known obstacles from the SLAM map + keep-outs (default) or
+#                               from the authored layout (config/site.yaml)
 #   --no-workers                don't start the moving workers (used for mapping)
 #   --payload=KG                a loaded pallet of KG kg fixed on the deck (default 0)
 # Each component runs in its own process group so stop_demo.sh can kill the
@@ -24,7 +26,7 @@ running() {
     ps -eo pid=,args= | grep -E "$PATTERN" | grep -v -E "grep|stop_demo|start_demo"
 }
 
-RESTART=false; HEADLESS=false; ODOMETRY=drift; LOCALIZATION=amcl; WORKERS=true; PAYLOAD=0
+RESTART=false; HEADLESS=false; ODOMETRY=drift; LOCALIZATION=amcl; WORKERS=true; PAYLOAD=0; SITE=map
 for arg in "$@"; do
     case "$arg" in
         --restart) RESTART=true ;;
@@ -32,6 +34,7 @@ for arg in "$@"; do
         --odometry=perfect|--odometry=drift) ODOMETRY=${arg#*=} ;;
         --localization=none|--localization=slam|--localization=amcl) LOCALIZATION=${arg#*=} ;;
         --no-workers) WORKERS=false ;;
+        --site=layout|--site=map) SITE=${arg#*=} ;;
         --payload=*) PAYLOAD=${arg#*=}
                      [[ $PAYLOAD =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "bad --payload: $PAYLOAD"; exit 2; } ;;
         *) echo "unknown option: $arg"; exit 2 ;;
@@ -56,6 +59,7 @@ source /opt/ros/jazzy/setup.bash
 source "$WS/install/setup.bash"
 set -u
 cd "$WS"
+export MASONASSIST_SITE_SOURCE=$SITE   # site_model.py: where known obstacles come from
 
 launch() {  # launch <name> <command...>
     local name=$1; shift
@@ -73,7 +77,7 @@ fail() {  # a half-started stack is worse than none: stop it all
 echo "[1/3] Gazebo + robot + VFH+ navigation..."
 launch sim ros2 launch masonassist_description gazebo.launch.py \
     world_file:=construction_site.world enable_vfh_plus:=true headless:=$HEADLESS \
-    odometry:=$ODOMETRY localization:=$LOCALIZATION payload_kg:=$PAYLOAD
+    odometry:=$ODOMETRY localization:=$LOCALIZATION payload_kg:=$PAYLOAD site:=$SITE
 for i in $(seq 1 90); do
     grep -q "Entity creation successful" "$RUN_DIR/sim.log" 2>/dev/null && break
     sleep 1
@@ -156,9 +160,9 @@ print(' '.join(gone))" 2>&1)
 [ -z "$DATA" ] || fail "No data from: $DATA - see $RUN_DIR/*.log"
 
 if $HEADLESS; then
-    echo "Running: all $N components (headless, no Gazebo GUI, odometry=$ODOMETRY, localization=$LOCALIZATION, payload=${PAYLOAD} kg); odometry, LiDAR, IMU, supervisor and navigation status flowing"
+    echo "Running: all $N components (headless, no Gazebo GUI, odometry=$ODOMETRY, localization=$LOCALIZATION, payload=${PAYLOAD} kg, site=$SITE); odometry, LiDAR, IMU, supervisor and navigation status flowing"
 else
-    echo "Running: all $N components incl. Gazebo GUI (odometry=$ODOMETRY, localization=$LOCALIZATION, payload=${PAYLOAD} kg); odometry, LiDAR, IMU, supervisor and navigation status flowing"
+    echo "Running: all $N components incl. Gazebo GUI (odometry=$ODOMETRY, localization=$LOCALIZATION, payload=${PAYLOAD} kg, site=$SITE); odometry, LiDAR, IMU, supervisor and navigation status flowing"
 fi
 echo "Dashboard: http://localhost:8080"
 echo "Stop with: ./stop_demo.sh"

@@ -15,6 +15,8 @@ import math
 
 import numpy as np
 
+from robot_config import ROBOT
+
 CMD_TIMEOUT_S = 0.3
 SENSOR_TIMEOUT_S = 0.5
 LINK_TIMEOUT_S = 2.0
@@ -25,29 +27,29 @@ LINK_TIMEOUT_S = 2.0
 # Wall time is still checked against this looser backstop, so a frozen
 # clock or simulator still stops the robot.
 WALL_BACKSTOP_S = 1.0
-MAX_LINEAR = 0.25            # m/s
-MAX_ANGULAR = 0.5            # rad/s
+MAX_LINEAR = ROBOT['safety']['max_linear']      # m/s
+MAX_ANGULAR = ROBOT['safety']['max_angular']    # rad/s
 
 # collision guard: robot body in base_link (chassis 0.725 x 0.525 m, tracks
 # out to ~0.43 m each side), plus a stopping margin in the direction of travel
-BODY_FRONT_M = 0.3625
-BODY_REAR_M = 0.3625
-BODY_HALF_WIDTH_M = 0.43
-GUARD_MARGIN_M = 0.15
-LIDAR_X_OFFSET = 0.30
-LIDAR_MIN_RANGE_M = 0.1      # sensor <min>; returns inside the body
-                             # rectangle are excluded by the lane test below
-SELF_BANDS_DEG = ((-105.8, -96.8), (96.8, 105.8))   # same as vfh_plus_node
+BODY_FRONT_M = ROBOT['body']['front_m']
+BODY_REAR_M = ROBOT['body']['rear_m']
+BODY_HALF_WIDTH_M = ROBOT['body']['half_width_m']
+GUARD_MARGIN_M = ROBOT['safety']['guard_margin_m']
+LIDAR_X_OFFSET = ROBOT['lidar']['x_offset_m']
+LIDAR_MIN_RANGE_M = ROBOT['lidar']['min_range_m']   # sensor <min>; returns inside the body
+                                                    # rectangle are excluded by the lane test below
+SELF_BANDS_DEG = tuple(tuple(b) for b in ROBOT['lidar']['self_occlusion_bands_deg'])
 
 # Tilt guard (IMU). Limits from the simulated terrain tests (docs/terrain):
 # up to 25 kg the robot held and drove on everything tested (35 deg static),
 # with 50 kg (load centre ~0.43 m high) it tipped braking down 30 deg and
 # standing on 35 deg, but held and braked fine at 20 deg (tilt reads 20.4 deg
 # there), so the 50 kg limit sits just above 20 deg.
-TILT_LIMITS = ((25.0, 35.0), (50.0, 22.0))   # (payload kg, tilt limit deg), linear between
-TILT_SLOW_BAND_DEG = 5.0     # within this of the limit: creep speed only
-TILT_SLOW_SPEED = 0.1        # m/s - braking from 0.25 m/s on a slope is what tipped it
-TILT_RELEASE_DEG = 2.0       # hysteresis: a tilt stop releases below limit - this
+TILT_LIMITS = tuple(tuple(p) for p in ROBOT['safety']['tilt_limits'])   # (payload kg, limit deg), linear between
+TILT_SLOW_BAND_DEG = ROBOT['safety']['tilt_slow_band_deg']   # within this of the limit: creep speed only
+TILT_SLOW_SPEED = ROBOT['safety']['tilt_slow_speed']         # m/s - braking at 0.25 m/s on a slope tipped it
+TILT_RELEASE_DEG = ROBOT['safety']['tilt_release_deg']       # hysteresis: a tilt stop releases below limit - this
 
 
 def tilt_limit(payload_kg):

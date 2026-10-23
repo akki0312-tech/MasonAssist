@@ -15,7 +15,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from worker_mover import OBSTACLES  # noqa: E402
+from site_model import BOUNDS, MISSIONS, SITE, STATIONS  # noqa: E402
 
 ARRIVAL_TOLERANCE_M = 0.35   # vfh_plus_node GOAL_TOLERANCE_M is 0.3
 WAYPOINT_REACHED_M = 0.35    # intermediate route waypoints; larger values let the robot cut corners
@@ -40,37 +40,16 @@ ROUTE_CHECK_S = 1.0
 REROUTE_MIN_GAP_S = 5.0
 MIN_STATION_CLEARANCE_M = 0.6  # ~ VFH+ r_effective (0.5975 m)
 
-STATIONS = {
-    'dock': (0.0, 0.0, 'dock'),
-    'brick_pickup': (-6.0, -4.5, 'storage'),
-    'block_pickup': (-3.0, -4.5, 'storage'),
-    'building_door': (5.2, 1.25, 'delivery'),
-    'scaffold': (1.0, 4.6, 'delivery'),
-}
+# STATIONS and MISSIONS come from config/site.yaml (site_model).
 
-MISSIONS = {
-    'bricks_to_building': {
-        'material': 'bricks',
-        'legs': [('brick_pickup', 'load'), ('building_door', 'unload'), ('dock', 'travel')],
-    },
-    'blocks_to_scaffold': {
-        'material': 'blocks',
-        'legs': [('block_pickup', 'load'), ('scaffold', 'unload'), ('dock', 'travel')],
-    },
-}
 
 
 def station_clearance(x, y):
-    """Distance from (x, y) to the nearest OBSTACLES box edge (0 if inside)."""
-    best = math.inf
-    for cx, cy, hx, hy in OBSTACLES.values():
-        dx = max(abs(x - cx) - hx, 0.0)
-        dy = max(abs(y - cy) - hy, 0.0)
-        best = min(best, math.hypot(dx, dy))
-    return best
+    """Distance from (x, y) to the nearest known obstacle (0 if inside)."""
+    return float(SITE.clearance(x, y))
 
 
-SITE_LIMIT_M = 7.6           # perimeter walls sit at +-8 m
+SITE_LIMIT_M = BOUNDS[1] - 0.4   # goals must stay inside the perimeter walls
 MIN_GOAL_CLEARANCE_M = 0.35  # ad-hoc (map-click) goals: must not be inside/against an obstacle
 
 

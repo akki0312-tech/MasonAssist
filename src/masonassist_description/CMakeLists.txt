@@ -57,5 +57,6 @@ install(
     scripts/safety_supervisor_core.py
     scripts/odom_drift_core.py
     scripts/payload_model.py
+    scripts/robot_config.py
   DESTINATION lib/${PROJECT_NAME}
 )

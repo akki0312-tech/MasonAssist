@@ -28,9 +28,11 @@ import urllib.request
 WS = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.join(WS, 'src', 'masonassist_description', 'scripts'))
 from eval_metrics import (  # noqa: E402
-    arrival_errors, body_clearance, path_length, planned_length, summarize,
+    arrival_errors, body_clearance, path_length, planned_length, real_clearance, summarize,
+    world_collision_polygons,
 )
 from site_planner import SitePlanner  # noqa: E402
+from site_model import load_site  # noqa: E402
 from transport_mission import MISSIONS, STATIONS  # noqa: E402
 from worker_mover import OBSTACLES  # noqa: E402
 
@@ -49,6 +51,7 @@ STILL_MPS = 0.01                     # odom vs ground truth compared only when s
 DEBRIS_XY = (-3.17, -2.9)            # on the dock -> brick_pickup route; a detour exists
 DEBRIS_SIZE = (1.0, 0.8, 0.6)
 DOCK = STATIONS['dock'][:2]
+REAL_OBSTACLES = world_collision_polygons()   # ground truth: the world's collision shapes
 GOALS = [(-5.5, -1.0), (-6.5, 0.5), (-3.7, 4.5), (4.5, -1.5), DOCK]
 CUSTOM = ({'x': 4.5, 'y': -1.5}, {'x': -5.5, 'y': -1.0})
 
@@ -61,7 +64,7 @@ SCENARIOS = {   # name: (default reps, description)
                   f'spawned on the route at {DEBRIS_XY}'),
 }
 METRICS = ['wall_s', 'sim_s', 'rtf', 'travelled_m', 'planned_m', 'path_ratio', 'min_body_clearance_m',
-           'min_lidar_m', 'min_unmapped_m', 'slow_s', 'stop_s', 'replans', 'reroutes',
+           'min_real_clearance_m', 'min_lidar_m', 'min_unmapped_m', 'slow_s', 'stop_s', 'replans', 'reroutes',
            'max_learned_cells', 'supervisor_stops', 'max_arrival_err_m', 'final_dock_err_m',
            'max_est_err_m', 'mean_est_err_m', 'final_est_err_m', 'max_odom_drift_m', 'gt_check_dev_m']
 COLUMNS = ['scenario', 'rep', 'result', 'reason'] + METRICS + ['supervisor_reasons']
@@ -204,9 +207,10 @@ class Recorder:
             self.gt_dev = max(self.gt_dev, math.hypot(gt[0] - before[0], gt[1] - before[1]))
 
 
-def restart(gui, odometry, localization, payload):
+def restart(gui, odometry, localization, payload, site):
     args = [os.path.join(WS, 'start_demo.sh'), '--restart', f'--odometry={odometry}',
-            f'--localization={localization}', f'--payload={payload:g}'] + ([] if gui else ['--headless'])
+            f'--localization={localization}', f'--payload={payload:g}', f'--site={site}'] + \
+        ([] if gui else ['--headless'])
     r = subprocess.run(args, capture_output=True, text=True, timeout=300)
     return r.returncode == 0, r.stdout.strip().splitlines()[-3:]
 
@@ -303,6 +307,8 @@ def run_scenario(name, rec, planner):
         'path_ratio': round(travelled / planned, 3) if planned else None,
         'min_body_clearance_m': round(min(body_clearance(s['x'], s['y'], s['yaw']) for s in trace), 3)
         if trace else None,
+        'min_real_clearance_m': round(min(real_clearance(s['x'], s['y'], s['yaw'], REAL_OBSTACLES)
+                                          for s in trace), 3) if trace else None,
         'min_lidar_m': None if rec.lidar_run_min == math.inf else round(rec.lidar_run_min, 2),
         'min_unmapped_m': None if rec.unmapped_min == math.inf else round(rec.unmapped_min, 2),
         'slow_s': round(rec.slow_s, 1), 'stop_s': round(rec.stop_s, 1),
@@ -347,7 +353,7 @@ def write_summary(out, rows, started, gui, config):
     lines = [f'# Navigation evaluation - {started}', '',
              f"{len(rows)} runs, {config}, {'Gazebo GUI' if gui else 'headless'}, each from a clean restart with the robot "
              'at the dock. Mean ± sd (min–max) over successful runs.', '',
-             '| Scenario | Success | Time (s) | Travelled (m) | Path ratio | Min body clearance (m) | '
+             '| Scenario | Success | Time (s) | Travelled (m) | Path ratio | Min clearance, real / box (m) | '
              'Max arrival error (m) | Replans / reroutes | Learned cells (max) | Supervisor stops | '
              'Pose estimate error, max (m) | Raw odometry drift, max (m) |',
              '|---|---|---|---|---|---|---|---|---|---|---|---|']
@@ -358,7 +364,8 @@ def write_summary(out, rows, started, gui, config):
         mx = lambda k: max((r[k] for r in ok if r[k] is not None), default=None)   # noqa: E731
         lines.append(
             f"| {name} | {v['ok']}/{v['runs']} | {fmt(st['wall_s'])} | {fmt(st['travelled_m'], nd=2)} | "
-            f"{fmt(st['path_ratio'], nd=2)} | {mn('min_body_clearance_m')} | {mx('max_arrival_err_m')} | "
+            f"{fmt(st['path_ratio'], nd=2)} | {mn('min_real_clearance_m')} / {mn('min_body_clearance_m')} | "
+            f"{mx('max_arrival_err_m')} | "
             f"{sum(r['replans'] or 0 for r in ok)} / {sum(r['reroutes'] or 0 for r in ok)} | "
             f"{mx('max_learned_cells')} | {sum(r['supervisor_stops'] or 0 for r in ok)} | "
             f"{mx('max_est_err_m')} | {mx('max_odom_drift_m')} |")
@@ -369,8 +376,8 @@ def write_summary(out, rows, started, gui, config):
     lines += ['', 'Path ratio = distance driven ÷ shortest planned route on the known layout (1.00 = the '
               'planned route; slightly below 1 is normal because the robot cuts waypoint corners within '
               '0.35 m and stops within 0.35 m of each station; above 1 = detours). '
-              'Body clearance = smallest gap between the robot footprint and any known obstacle box '
-              "(the boxes cover each object's collision shape, so this is conservative). "
+              'Clearance = smallest gap between the robot footprint and the real collision shapes in the '
+              "world at robot height (real), or the obstacle-list boxes, which are drawn larger (box). "
               'Supervisor stops = times the safety supervisor overrode navigation. Pose estimate error = '
               'largest gap between where the robot thought it was and where it really was (Gazebo ground '
               'truth), sampled every 0.2 s through the run. All other metrics use the ground truth.']
@@ -438,6 +445,8 @@ def main():
     ap.add_argument('--localization', choices=['none', 'amcl'], default='amcl',
                     help='localisation (start_demo.sh --localization)')
     ap.add_argument('--payload', type=float, default=0.0, help='kg on the deck (start_demo.sh --payload)')
+    ap.add_argument('--site', choices=['layout', 'map'], default='map',
+                    help="known obstacles from the authored layout or the SLAM map (start_demo.sh --site)")
     ap.add_argument('--out', help='output directory (default eval_results/<timestamp>)')
     args = ap.parse_args()
     names = [n.strip() for n in args.scenarios.split(',') if n.strip()]
@@ -453,13 +462,13 @@ def main():
     node = rclpy.create_node('eval_navigation')
     rec = Recorder(node)
     threading.Thread(target=rclpy.spin, args=(node,), daemon=True).start()
-    planner = SitePlanner()
+    planner = SitePlanner(site=load_site(source=args.site)[0])   # shortest route on the robot's own site model
 
     rows, traces = [], []
     plan = [(n, k + 1) for n in names for k in range(args.reps or SCENARIOS[n][0])]
     for i, (name, rep) in enumerate(plan, 1):
         print(f'[{i}/{len(plan)}] {name} #{rep}: restarting simulation...', flush=True)
-        ok, tail = restart(args.gui, args.odometry, args.localization, args.payload)
+        ok, tail = restart(args.gui, args.odometry, args.localization, args.payload, args.site)
         rec.reset()
         t_wait = time.monotonic()
         while ok and (rec.pose is None or rec.sim is None) and time.monotonic() - t_wait < 30:
@@ -497,7 +506,7 @@ def main():
             w.writeheader()
             w.writerows(rows)
 
-    print('\n' + write_summary(out, rows, started, args.gui, f'odometry={args.odometry}, localization={args.localization}, payload={args.payload:g} kg'))
+    print('\n' + write_summary(out, rows, started, args.gui, f'odometry={args.odometry}, localization={args.localization}, payload={args.payload:g} kg, site={args.site}'))
     plot_paths(out, rows, traces)
     print(f'\nResults: {out}')
     os._exit(0)

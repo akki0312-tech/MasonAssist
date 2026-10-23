@@ -2,7 +2,7 @@
 """ROS-free live obstacle map for MasonAssist.
 
 Learns obstacles that the robot actually sees with its LiDAR but that are NOT
-in the authored site layout (worker_mover.OBSTACLES) - debris, a new pallet -
+in the known site (site_model.SITE) - debris, a new pallet -
 so the A* planner can route around them. Occupancy grid with log-odds: each
 beam lowers the cells it passes through ("free") and raises the cell it ends
 in ("hit"), so cells clear again once whatever was there has gone.
@@ -20,10 +20,11 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from site_planner import BOUNDS, RESOLUTION_M  # noqa: E402
-from worker_mover import OBSTACLES  # noqa: E402
+from site_model import SITE  # noqa: E402
+from robot_config import ROBOT  # noqa: E402
 
-LIDAR_X_OFFSET = 0.30     # laser_frame is 0.30 m ahead of base_link (live TF)
-SELF_RANGE_M = 0.25       # closer returns are the robot's own track housings
+LIDAR_X_OFFSET = ROBOT['lidar']['x_offset_m']    # laser_frame ahead of base_link
+SELF_RANGE_M = ROBOT['lidar']['self_range_m']    # closer returns are the robot's own track housings
 MAX_RANGE_M = 6.0         # clear free space only this far along each beam
 MAP_MATCH_M = 0.3         # within this of a known box = mapped site (safety_zones rule)
 ROBOT_CLEAR_M = 0.5       # never mark cells this close to the robot
@@ -36,12 +37,7 @@ PERSIST_S = 4.0
 def _known_layout_mask(n, lo, res):
     xs = lo + np.arange(n) * res
     gx, gy = np.meshgrid(xs, xs, indexing='ij')
-    mask = np.zeros((n, n), dtype=bool)
-    for cx, cy, hx, hy in OBSTACLES.values():
-        dx = np.maximum(np.abs(gx - cx) - hx, 0.0)
-        dy = np.maximum(np.abs(gy - cy) - hy, 0.0)
-        mask |= np.hypot(dx, dy) <= MAP_MATCH_M
-    return mask
+    return SITE.clearance(gx, gy) <= MAP_MATCH_M
 
 
 class LiveMap:

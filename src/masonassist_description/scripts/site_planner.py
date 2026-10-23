@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """ROS-free global route planner over the KNOWN site layout.
 
-Grid A* on worker_mover.OBSTACLES (the authored world geometry, the same
-registry the dashboard draws), each box inflated by INFLATION_M. Returns a
+Grid A* on the site model (site_model.SITE: the authored obstacle layout or
+the SLAM map plus keep-outs, per config/site.yaml), keeping INFLATION_M from
+every known obstacle. Returns a
 short list of waypoints (line-of-sight pruned) for vfh_plus_node to follow
 one at a time.
 
@@ -14,7 +15,7 @@ through waypoints that already keep >= INFLATION_M from every known
 obstacle removes that local minimum. VFH+ still does all collision
 avoidance, including anything NOT in this map (workers, debris).
 
-This is planning on an authored map, not SLAM or Nav2.
+This is grid planning on the site model, not Nav2.
 """
 
 import heapq
@@ -25,34 +26,29 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from worker_mover import OBSTACLES  # noqa: E402
+from site_model import BOUNDS, SITE  # noqa: E402
 
 RESOLUTION_M = 0.1
-BOUNDS = (-8.0, 8.0)          # site perimeter (walls at +-8)
 INFLATION_M = 0.7             # VFH+ r_effective (0.5975 m) + 0.1 m margin: at exactly
                               # r_effective a thin post (warning-sign pole) flickered in
                               # and out of scans and stalled the robot beside it
 
 
 def _blocked(x, y, inflation=INFLATION_M):
-    for cx, cy, hx, hy in OBSTACLES.values():
-        dx = max(abs(x - cx) - hx, 0.0)
-        dy = max(abs(y - cy) - hy, 0.0)
-        if math.hypot(dx, dy) < inflation:
-            return True
-    return False
+    return bool(SITE.clearance(x, y) < inflation)
 
 
 class SitePlanner:
 
-    def __init__(self, resolution=RESOLUTION_M, inflation=INFLATION_M):
+    def __init__(self, resolution=RESOLUTION_M, inflation=INFLATION_M, site=None):
         self.res = resolution
         self.inflation = inflation
         lo, hi = BOUNDS
         self.n = int(round((hi - lo) / resolution)) + 1
         self.lo = lo
-        self.free = [[not _blocked(self._x(i), self._x(j), inflation)
-                      for j in range(self.n)] for i in range(self.n)]
+        xs = lo + np.arange(self.n) * resolution
+        gx, gy = np.meshgrid(xs, xs, indexing='ij')
+        self.free = (site or SITE).clearance(gx, gy) >= inflation      # [i][j] = (x_i, y_j)
         self.dynamic = None   # bool grid: learned obstacles (live_map), already inflated
 
     def set_dynamic(self, mask):

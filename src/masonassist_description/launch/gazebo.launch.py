@@ -85,6 +85,12 @@ def generate_launch_description():
         description='safety_supervisor stops the robot if the mission server heartbeat '
                     '(/operator_heartbeat) is lost for 2 s. Set false when driving '
                     'without mission_server.py (e.g. manual /cmd_vel_nav tests).')
+    declare_site = DeclareLaunchArgument(
+        'site', default_value='map',
+        description="where the site's known obstacles come from (config/site.yaml): "
+                    "'layout' = the simulation's authored obstacle list, 'map' = the SLAM map + keep-outs")
+    # read by site_model.py in every node that plans or checks against the site
+    set_site_source = SetEnvironmentVariable('MASONASSIST_SITE_SOURCE', LaunchConfiguration('site'))
     declare_localization = DeclareLaunchArgument(
         'localization', default_value='amcl',
         description="'none' = map->odom is identity (pose = odometry); 'slam' = slam_toolbox "
@@ -472,6 +478,8 @@ def generate_launch_description():
         declare_payload,
         declare_payload_cog,
         declare_localization,
+        declare_site,
+        set_site_source,
         declare_map,
         validate_controller_selection,
         gazebo_sim,

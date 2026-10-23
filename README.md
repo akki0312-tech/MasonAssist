@@ -16,7 +16,8 @@ This is a **simulation project**. Nothing here has run on physical hardware.
 | Localisation | odometry drifts like real track odometry (up to 4 m); with a SLAM map and AMCL, 6/6 jobs complete with 2–4 cm mean / 9 cm max pose error. Without localisation, 0/6 | [Localisation](#localisation-slam-map--amcl-vs-drifting-odometry) |
 | Safety | an independent supervisor has the final say on every command. Every check was triggered live; a frozen navigation node, LiDAR relay, mission server or supervisor each stops the robot. An IMU tilt guard stops a loaded robot climbing or standing on slopes beyond its limit | [Safety supervisor](#safety-supervisor), [verification log](docs/VERIFICATION.md#safety), [tilt guard](docs/terrain/supervisor_guard.md) |
 | Payload & terrain | 0–25 kg: no effect on slopes up to 30° concrete / 20° gravel and clay. 50 kg tips on 30–35°: the tilt guard prevents climbing or standing there, but not rolling over a crest onto a steep descent | [Payload & terrain](#payload--terrain-simulation) |
-| Tests | 227 unit tests; reproducible evaluation tools for navigation, mapping and terrain | [Tests](#tests) |
+| Hardware-ready | robot and site described in two config files; the robot plans on its SLAM map (7/7 runs, same as the authored layout) | [Planning on the SLAM map](#planning-on-the-slam-map), [Running on a real robot](#running-on-a-real-robot) |
+| Tests | 240 unit tests; reproducible evaluation tools for navigation, mapping and terrain | [Tests](#tests) |
 
 Every result comes from tools in this repository and can be re-run (`tools/`). The raw data is in `docs/`.
 
@@ -26,7 +27,7 @@ Every result comes from tools in this repository and can be re-run (`tools/`). T
 
 - **Transport missions** — multi-leg jobs such as *brick pickup → building door → dock*, with load/unload stops and payload tracking. A **custom job** takes any pick-up and drop-off: a station or a point clicked on the map.
 - **Job queue + history** — queue several deliveries and the robot runs them back to back. A failed or cancelled job pauses the queue until the operator resumes it.
-- **Route planning** — A\* on the known site layout plans corner-safe waypoints for every leg and every map click.
+- **Route planning** — A\* on the site's SLAM map (plus keep-outs for what the LiDAR can't map) plans corner-safe waypoints for every leg and every map click. The simulation's authored layout is an alternative (`--site=layout`).
 - **Localisation** — odometry drifts the way real track odometry does (slip on distance and turning). The robot localises with AMCL against a map of the site built with SLAM (slam_toolbox), so it stays within a few centimetres of its true position.
 - **Live obstacle map** — obstacles the LiDAR sees that aren't in the site layout (debris, a new pallet) and that stay put for 4 s are learned into an occupancy grid. The robot reroutes around them immediately, and they clear again once the LiDAR sees through the empty space.
 - **Local obstacle avoidance** — a VFH+ (Vector Field Histogram Plus) controller drives between waypoints using live 360° LiDAR.
@@ -79,6 +80,7 @@ The defaults are drifting odometry with AMCL localisation on the saved map, and 
 ./start_demo.sh --payload=25                             # 25 kg pallet on the deck
 ./start_demo.sh --odometry=perfect --localization=none   # robot uses the simulator's true pose
 ./start_demo.sh --localization=none                      # drifting odometry, no localisation (it gets lost)
+./start_demo.sh --site=layout                            # plan on the authored obstacle list instead of the SLAM map
 ```
 
 `start_demo.sh` refuses to start if a stack is already running, to avoid two controllers fighting over `/cmd_vel`. After startup it waits 5 s, then checks that every component is still running and that odometry, LiDAR, IMU, supervisor and navigation status are all flowing. If anything is missing, it names it, stops the partly started stack and exits with an error. Logs go to `/tmp/masonassist_demo/`.
@@ -146,7 +148,7 @@ flowchart LR
 
 **How a delivery works:**
 1. The operator queues a job in the dashboard.
-2. `mission_server` takes the next job and plans a route with A\* over the known layout plus any learned obstacles, keeping 0.7 m from both. It publishes one waypoint at a time on `/goal_pose`.
+2. `mission_server` takes the next job and plans a route with A\* over the site model (the SLAM map plus keep-outs, by default) and any learned obstacles, keeping 0.7 m from both. It publishes one waypoint at a time on `/goal_pose`.
 3. `vfh_plus_node` steers toward the current waypoint with VFH+ on live LiDAR, using the localised pose (`/robot_pose`). Its safety gate limits speed near unmapped obstacles.
 4. Every second, `mission_server` checks whether the remaining route now crosses a learned obstacle, and reroutes if it does.
 5. It advances to the next waypoint when the robot reaches the current one, and marks a station reached only when the pose estimate confirms the robot is there.
@@ -181,7 +183,7 @@ Navigation never drives the robot directly. `vfh_plus_node` publishes `/cmd_vel_
 
 | Layer | Meaning |
 |---|---|
-| Grey boxes | Known site layout (the authored world geometry the planner uses) |
+| Grey cells / boxes | The known site the planner uses: SLAM map cells, with keep-outs as dashed boxes (`--site=layout`: the authored obstacle boxes) |
 | Red dots | Live LiDAR returns |
 | Orange dots | LiDAR returns not explained by the layout — possible person or debris |
 | Cyan line | Trajectory (the robot's pose estimate) |
@@ -322,6 +324,59 @@ python3 tools/terrain_test.py                                   # full matrix, ~
 python3 tools/terrain_test.py --payloads 0 --lanes concrete_10  # quick check
 ```
 
+### Planning on the SLAM map
+
+By default the robot works from the **SLAM map**, not from a hand-written obstacle list. That's the path a real robot takes on a site it has only mapped.
+- **Obstacles for planning:** route planning, the "unmapped return = possible person" check, the live map and goal validation all use the map's occupied and never-seen cells.
+- **Keep-outs:** added for what a 2D LiDAR can't map. Every object lower than 0.5 m is one, along with pallet bases and a taped-off area.
+- **Map cleanup:** four speckle cells are erased.
+
+All of this is in `config/site.yaml`. `--site=layout` switches back to the simulation's authored list. Same scenarios, same conditions ([details](docs/eval/site_map/summary.md)):
+
+| Site source | Success | Blocks job (sim time) | Closest real clearance | Max pose error |
+|---|---|---|---|---|
+| SLAM map + keep-outs (default) | 7/7 | 144 s | 0.133 m | 0.103 m |
+| Authored layout | 7/7 | 167 s | 0.148 m | 0.084 m |
+
+The map records objects at their real size, while the authored boxes are padded. That opens a shorter route to the scaffold and makes blocks jobs about 20 s faster; elsewhere the times are equal.
+- **Keep-outs were measured, not guessed.** A first map-mode run passed 2 cm from a 0.37 m rubble pile whose footprint the LiDAR had only partly mapped. Every object lower than 0.5 m is now a keep-out, and a test enforces that.
+- **"Real" clearance** is measured against the world's actual collision shapes at robot height. The older box-based number is still recorded alongside it.
+
+---
+
+## Running on a real robot
+
+The logic doesn't change: navigation, safety supervisor, missions, dashboard, SLAM and AMCL all talk to standard ROS topics. What changes is configuration and a hardware layer underneath.
+
+**Configuration (no code changes):**
+- **`config/robot.yaml`:**
+  - body size, LiDAR mount and min range, and the bearings where the robot's own body blocks the LiDAR;
+  - navigation radius and safety margin;
+  - speed limits, collision-guard margin and tilt limits.
+  
+  Copy it, measure the real robot, and set `MASONASSIST_ROBOT_CONFIG=/path/robot.yaml`.
+- **`config/site.yaml`:**
+  1. Build a map of the site: drive the robot around with `localization:=slam`, as `tools/build_map.py` does in simulation.
+  2. Draw keep-outs for anything lower than the LiDAR or off-limits.
+  3. Erase speckle.
+  4. Set the stations and missions.
+  
+  Then point `MASONASSIST_SITE_CONFIG` at the file.
+
+**Hardware layer (new code):**
+
+| Simulation | Real robot |
+|---|---|
+| Gazebo + `ros_gz_bridge`, TrackedVehicle | A motor-driver node: `/cmd_vel` → left/right track speeds. The 0.5 m/s² acceleration limit and the 0.5 s command timeout must be in the motor-controller firmware |
+| `OdometryPublisher` → `odom_drift` | Track-encoder odometry publishing `/odom` and TF `odom→base_footprint`, ideally fused with the IMU (e.g. `robot_localization`) |
+| Gazebo LiDAR + `scan_frame_fix` | The LiDAR's ROS driver, publishing `/scan` in `laser_frame` |
+| Gazebo IMU | IMU driver → `/imu` |
+| Software e-stop | A hardware e-stop circuit that cuts motor power. The software one stays as a second layer |
+| `worker_mover`, `/ground_truth/odom`, `set_pose` | Not used |
+| `start_demo.sh` + `gazebo.launch.py` | A `robot.launch.py` with the same nodes, `use_sim_time:=false`, and the URDF of the real robot |
+
+The simulation stays useful alongside the real robot: the same nodes run in both, so every change can be checked with `tools/eval_navigation.py` first.
+
 ---
 
 ## HTTP API
@@ -375,10 +430,11 @@ source /opt/ros/jazzy/setup.bash && source install/setup.bash
 python3 -m pytest src/masonassist_description/test/
 ```
 
-227 tests covering:
+240 tests covering:
 - the VFH+ core and node, and LiDAR self-occlusion handling;
 - safety zones and the safety supervisor, including the tilt guard;
 - the A\* planner, the live obstacle map, the mission sequencer and the job queue;
+- the robot and site config files, and the SLAM-map site model (keep-outs, cleanup, every leg routable on the map);
 - world-vs-obstacle-registry consistency;
 - drifting odometry and pose composition;
 - the evaluation metrics, the payload model and the terrain world;
@@ -391,7 +447,7 @@ python3 -m pytest src/masonassist_description/test/
 - **Simulation only** — no hardware testing.
 - **Tilt guard only reacts** — the IMU tilt guard can stop a loaded robot on a slope that's too steep, but it can't see a slope coming, so it can't prevent rolling over a crest onto a steep descent. The 2D LiDAR doesn't see slopes either (it sees ramps as walls). For heavy loads, steep descents are a site rule. In simulation, Gazebo's IMU orientation is exact.
 - **Odometry drift is modelled, not physical** — `odom_drift` adds track-odometry-style errors to the simulator's true motion. A real robot's drift will have its own character, and AMCL's noise parameters may need retuning.
-- **Two maps** — AMCL localises on the SLAM map, but route planning uses the authored layout (`worker_mover.OBSTACLES`) plus learned obstacles. They agree (99.9 % of map cells lie on known objects), but on a real site the plan would come from the SLAM map. There is no Nav2. The live map only learns objects that stay put for 4 s.
+- **Keep-outs are hand-made** — planning uses the SLAM map, but a 2D LiDAR can't map objects lower than its scan plane, so those are keep-out boxes in `config/site.yaml`. Here they come from the simulation's knowledge of the world; on a real site an operator draws them. Anything new and low that nobody drew is invisible to the robot. There is no Nav2. The live map only learns objects that stay put for 4 s.
 - **Start pose is known** — AMCL starts at the dock. There is no global relocalisation if the robot is started elsewhere.
 - **"Unmapped" is not person recognition** — anything not in the layout (a person, debris, a new pallet) triggers the safety zones the same way.
 - **LiDAR self-occlusion mask** — two 9° bands where the robot's own tracks block the LiDAR are ignored. A very narrow obstacle that sits *only* inside those bands could go unseen; in that case the controller reports no data and stops rather than driving on.
@@ -413,6 +469,7 @@ tools/terrain_test.py                   payload x slope x surface test matrix ->
 tools/make_terrain_world.py             generates worlds/terrain_test.world
 docs/eval/, docs/localization/,         reference results: navigation evaluation, localisation
   docs/map/, docs/terrain/                comparison, SLAM map, payload & terrain
+docs/eval/site_map/                     planning on the SLAM map vs the authored layout
 docs/VERIFICATION.md                    run-by-run verification log
 src/masonassist_description/
   launch/gazebo.launch.py               simulation, bridges, robot spawn (+payload), localisation, VFH+, safety supervisor
@@ -421,6 +478,8 @@ src/masonassist_description/
   worlds/construction_site.world        construction site: stations, materials, building, facilities, workers
   worlds/terrain_test.world             ramp lanes (slope x surface) and a side slope
   maps/construction_site.{yaml,pgm}     SLAM map of the site (AMCL localises on it)
+  config/robot.yaml                     robot parameters (body, LiDAR, speeds, tilt limits)
+  config/site.yaml                      site: obstacle source (SLAM map / layout), keep-outs, stations, missions
   config/amcl.yaml, slam_mapping.yaml   localisation and mapping parameters
   scripts/
     vfh_plus_core.py                    VFH+ algorithm (ROS-free)
@@ -437,6 +496,8 @@ src/masonassist_description/
     worker_mover.py                     moves the construction workers; site obstacle registry
     odom_drift_core.py / odom_drift.py  drifting track odometry from the true pose (ROS-free core + node)
     map_pose_publisher.py               /robot_pose = map->odom (AMCL) + /odom
+    robot_config.py                     loads config/robot.yaml (ROS-free)
+    site_model.py                       site obstacles from the SLAM map + keep-outs, or the authored layout (ROS-free)
     payload_model.py                    loaded pallet link for the robot model (ROS-free)
     eval_metrics.py                     evaluation metrics: path length, clearance, arrival error, map quality (ROS-free)
     scan_frame_fix.py, odom_to_tf_broadcaster.py   LiDAR frame and TF helpers

@@ -25,11 +25,10 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 
-# Reuse worker_mover.py's own OBSTACLES registry as the single source of
-# truth for the dashboard's "known site layout" overlay, instead of
-# keeping a second, driftable copy of the same coordinates.
+# The dashboard's "known site" overlay comes from the same site model the
+# planner and safety zones use (authored layout or SLAM map + keep-outs).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from worker_mover import OBSTACLES  # noqa: E402
+from site_model import SITE  # noqa: E402
 from transport_mission import (  # noqa: E402
     MISSIONS, STATIONS, TransportMission, custom_job_spec, validate_goal,
 )
@@ -377,15 +376,11 @@ def make_handler(node: MissionServerNode):
                 self.end_headers()
                 self.wfile.write(body)
             elif self.path == '/api/layout':
-                # The REAL, authored site geometry - the exact same
-                # OBSTACLES dict worker_mover.py validates worker paths
-                # against (imported, not duplicated). This is the known
-                # site layout, not a planner-derived or fabricated map.
-                layout = [
-                    {'name': name, 'cx': cx, 'cy': cy, 'hx': hx, 'hy': hy}
-                    for name, (cx, cy, hx, hy) in OBSTACLES.items()
-                ]
-                self._send_json({'obstacles': layout})
+                # The site model the planner and safety zones use: layout
+                # boxes, or SLAM map obstacle cells plus keep-out boxes.
+                items = SITE.draw_items()
+                self._send_json({'source': SITE.source, 'obstacles': items['boxes'],
+                                 'cells': items['cells'], 'cell_size': items['cell_size']})
             elif self.path == '/api/stations':
                 self._send_json({
                     'stations': [{'name': n, 'x': x, 'y': y, 'kind': k}

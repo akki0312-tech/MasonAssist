@@ -1,0 +1,33 @@
+# MasonAssist robot parameters: everything robot-specific the navigation,
+# safety and mapping code needs. For a different (or real) robot, copy this
+# file, measure, and point MASONASSIST_ROBOT_CONFIG at the copy - no code
+# changes. Missing keys fall back to the defaults in scripts/robot_config.py
+# (the simulated robot's values).
+
+body:                      # footprint in base_link, metres
+  front_m: 0.3625          # base_link origin to front edge
+  rear_m: 0.3625
+  half_width_m: 0.43       # incl. tracks
+
+lidar:
+  x_offset_m: 0.30         # laser_frame ahead of base_link (VFH reads it from TF)
+  min_range_m: 0.1         # sensor minimum
+  self_range_m: 0.25       # returns closer than this are the robot itself
+  # bearings (deg, laser frame) where the robot's own tracks block the scan
+  self_occlusion_bands_deg: [[-105.8, -96.8], [96.8, 105.8]]
+
+navigation:                # VFH+
+  robot_radius_m: 0.4475   # circumscribed radius of the chassis
+  safety_margin_m: 0.15
+  forward_speed_max: 0.2   # m/s
+  max_angular_speed: 0.3   # rad/s
+
+safety:                    # safety supervisor
+  max_linear: 0.25         # m/s, hard clamp
+  max_angular: 0.5         # rad/s
+  guard_margin_m: 0.15     # collision guard stopping margin beyond the body
+  # tilt limit by payload [kg, deg], linear between (simulated terrain tests)
+  tilt_limits: [[25.0, 35.0], [50.0, 22.0]]
+  tilt_slow_band_deg: 5.0
+  tilt_slow_speed: 0.1     # m/s
+  tilt_release_deg: 2.0

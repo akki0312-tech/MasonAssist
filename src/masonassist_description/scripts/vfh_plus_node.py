@@ -52,6 +52,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import json  # noqa: E402
 from safety_zones import SafetyGate, unmapped_points  # noqa: E402
 from vfh_plus_core import VFHParams, VFHPlusCore, VFHState, wrap_to_pi  # noqa: E402
+from robot_config import ROBOT  # noqa: E402
 
 
 CURRENT_HEADING_ERROR = 0.0  # unchanged from v1, see module docstring
@@ -130,7 +131,7 @@ def escape_linear_velocity(ranges, angles, r_robot, range_min):
 # 1 deg beyond the measured extent for margin. VFHPlusCore itself is not
 # modified - this only prevents two known-false rays from ever reaching
 # it, the same way an out-of-range reading already would not.
-SELF_OCCLUSION_BANDS_DEG = ((-105.8, -96.8), (96.8, 105.8))
+SELF_OCCLUSION_BANDS_DEG = tuple(tuple(b) for b in ROBOT['lidar']['self_occlusion_bands_deg'])
 
 
 def _yaw_of(q) -> float:
@@ -148,10 +149,10 @@ class VFHPlusNode(Node):
         # Geometry fact, not a tuning knob (derived from the real chassis
         # footprint 0.725 x 0.525 m) - exposed as a parameter for
         # flexibility only, default taken from the core, not re-invented.
-        self.declare_parameter('robot_radius', core_defaults.r_robot)
+        self.declare_parameter('robot_radius', ROBOT['navigation']['robot_radius_m'])
         # Initial/tunable, unvalidated against real data - see HANDOFF.md
         # and the VFH+ design-study history for the full discussion.
-        self.declare_parameter('safety_margin', core_defaults.safety_margin)
+        self.declare_parameter('safety_margin', ROBOT['navigation']['safety_margin_m'])
         self.declare_parameter('d_max', core_defaults.d_max)
         # Currently UNVALIDATED against real histogram distributions.
         self.declare_parameter('threshold_high', core_defaults.threshold_high)
@@ -170,8 +171,8 @@ class VFHPlusNode(Node):
         # newly invented. steering_gain and scan_timeout are genuinely new
         # for this node and are NOT validated - conservative, round
         # starting points only.
-        self.declare_parameter('forward_speed_max', 0.2)
-        self.declare_parameter('max_angular_speed', 0.3)
+        self.declare_parameter('forward_speed_max', ROBOT['navigation']['forward_speed_max'])
+        self.declare_parameter('max_angular_speed', ROBOT['navigation']['max_angular_speed'])
         self.declare_parameter('steering_gain', 1.0)
         self.declare_parameter('scan_timeout', 0.5)
 

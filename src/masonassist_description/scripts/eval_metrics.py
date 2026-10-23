@@ -102,6 +102,87 @@ def body_clearance(x, y, yaw, boxes=None):
     return min(polygon_distance(body, _box(*b)) for b in boxes)
 
 
+WORLD = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'worlds', 'construction_site.world')
+ROBOT_HEIGHT_BAND = (0.02, 0.6)   # m: shapes the robot body (+ a load) could touch
+
+
+def _rpy_matrix(r, p, y):
+    cr, sr, cp, sp, cy, sy = (math.cos(r), math.sin(r), math.cos(p), math.sin(p),
+                              math.cos(y), math.sin(y))
+    return ((cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr),
+            (sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr),
+            (-sp, cp * sr, cp * cr))
+
+
+def _apply(m, t, v):
+    return tuple(t[i] + sum(m[i][k] * v[k] for k in range(3)) for i in range(3))
+
+
+def _mul(a, b):
+    return tuple(tuple(sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)) for i in range(3))
+
+
+def _hull(points):
+    pts = sorted(set(points))
+    if len(pts) <= 2:
+        return pts
+
+    def half(seq):
+        out = []
+        for p in seq:
+            while len(out) >= 2 and ((out[-1][0] - out[-2][0]) * (p[1] - out[-2][1]) -
+                                     (out[-1][1] - out[-2][1]) * (p[0] - out[-2][0])) <= 0:
+                out.pop()
+            out.append(p)
+        return out
+    return half(pts)[:-1] + half(pts[::-1])[:-1]
+
+
+def world_collision_polygons(world=WORLD, band=ROBOT_HEIGHT_BAND,
+                             skip=('ground_plane', 'concrete_slab', 'worker_1', 'worker_2')):
+    """Ground-truth obstacles: the xy outline (convex hull) of every static
+    collision shape in the world that reaches into the robot's height band.
+    Unlike the obstacle boxes, this is the real geometry (e.g. a sign's thin
+    post, not a box around its board)."""
+    import xml.etree.ElementTree as ET
+
+    def pose(el):
+        p = el.find('pose')
+        return [float(v) for v in p.text.split()] if p is not None else [0.0] * 6
+    polys = []
+    for model in ET.parse(world).getroot().iter('model'):
+        if model.get('name') in skip:
+            continue
+        mp = pose(model)
+        mm, mt = _rpy_matrix(*mp[3:]), tuple(mp[:3])
+        for link in model.iter('link'):
+            lp = pose(link)
+            lm, lt = _mul(mm, _rpy_matrix(*lp[3:])), _apply(mm, mt, lp[:3])
+            for col in link.iter('collision'):
+                g = col.find('geometry')
+                if g.find('box/size') is not None:
+                    hx, hy, hz = (float(v) / 2 for v in g.find('box/size').text.split())
+                elif g.find('cylinder') is not None:
+                    hx = hy = float(g.find('cylinder/radius').text)
+                    hz = float(g.find('cylinder/length').text) / 2
+                else:
+                    continue
+                cp = pose(col)
+                cm, ct = _mul(lm, _rpy_matrix(*cp[3:])), _apply(lm, lt, cp[:3])
+                corners = [_apply(cm, ct, (sx * hx, sy * hy, sz * hz))
+                           for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)]
+                if max(c[2] for c in corners) < band[0] or min(c[2] for c in corners) > band[1]:
+                    continue
+                polys.append(_hull([(round(c[0], 4), round(c[1], 4)) for c in corners]))
+    return polys
+
+
+def real_clearance(x, y, yaw, polys):
+    """Smallest gap between the robot body and the real collision geometry."""
+    body = footprint(x, y, yaw)
+    return min(polygon_distance(body, p) for p in polys)
+
+
 def arrival_errors(trace, targets):
     """Distance to the leg target each time a station is reached: on entering
     loading / unloading / complete. targets: [(x, y)] per leg."""

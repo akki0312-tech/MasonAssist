@@ -109,3 +109,14 @@ def test_map_quality_perfect_partial_and_phantom():
     assert q['precision'] == pytest.approx(21 / 23)
     assert 0.3 < q['recall'] < 0.5
     assert map_quality([], boxes)['precision'] is None
+
+
+def test_real_clearance_uses_actual_geometry_not_boxes():
+    from eval_metrics import real_clearance, world_collision_polygons
+    polys = world_collision_polygons()
+    assert len(polys) > 40
+    # beside the warning sign (post at 4.0, 1.6; board above robot height):
+    # the obstacle box says contact, the real post is ~0.3 m away
+    x, y = 4.0 + 0.04 + BODY_HALF_WIDTH_M + 0.3, 1.6
+    assert real_clearance(x, y, math.pi / 2, polys) == pytest.approx(0.3, abs=0.02)
+    assert body_clearance(x, y, math.pi / 2) < 0.05

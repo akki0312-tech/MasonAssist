@@ -192,7 +192,11 @@ function pxToWorld(px, py) {
 }
 
 let latestState = {};
-let siteLayout = [];       // [{name,cx,cy,hx,hy}] - fetched once
+let siteLayout = [];       // [{name,cx,cy,hx,hy,keepout?}] - fetched once
+let siteCells = [];        // SLAM map obstacle cells [[x,y]] (site source 'map'), fetched once
+let siteCellSize = 0;
+let siteCellSet = new Set();
+let siteSource = 'layout';
 let trail = [];            // client-accumulated odometry trajectory
 const TRAIL_MAX = 300;
 let stations = [];         // [{name,x,y,kind}] - fetched once
@@ -200,13 +204,21 @@ const LIDAR_X_OFFSET = 0.30;
 const MAP_MATCH_M = 0.3;   // same rule as safety_zones.py: farther than this from every
                            // known box = unmapped return (possible person / debris)
 
-function layoutClearance(x, y) {
-  let best = Infinity;
+const cellKey = (x, y) => `${Math.floor(x / siteCellSize)},${Math.floor(y / siteCellSize)}`;
+
+function isMapped(x, y) {
+  // same rule as safety_zones.py: within MAP_MATCH_M of a known obstacle
   for (const o of siteLayout) {
     const dx = Math.max(Math.abs(x - o.cx) - o.hx, 0), dy = Math.max(Math.abs(y - o.cy) - o.hy, 0);
-    best = Math.min(best, Math.hypot(dx, dy));
+    if (Math.hypot(dx, dy) <= MAP_MATCH_M) return true;
   }
-  return best;
+  if (!siteCellSize) return false;
+  const n = Math.ceil(MAP_MATCH_M / siteCellSize);
+  const ci = Math.floor(x / siteCellSize), cj = Math.floor(y / siteCellSize);
+  for (let i = -n; i <= n; i++)
+    for (let j = -n; j <= n; j++)
+      if (siteCellSet.has(`${ci + i},${cj + j}`)) return true;
+  return false;
 }
 
 function renderSafety() {
@@ -401,6 +413,10 @@ async function loadLayout() {
     const res = await fetch('/api/layout');
     const data = await res.json();
     siteLayout = data.obstacles || [];
+    siteCells = data.cells || [];
+    siteCellSize = data.cell_size || 0;
+    siteSource = data.source || 'layout';
+    siteCellSet = new Set(siteCells.map(([x, y]) => cellKey(x, y)));
   } catch (e) {
     siteLayout = [];
   }
@@ -408,7 +424,7 @@ async function loadLayout() {
 
 function drawLegend() {
   const items = [
-    ['#4a5262', 'Known site layout (reference - authored geometry)'],
+    ['#4a5262', 'Known site (layout boxes, or SLAM map cells + dashed keep-outs)'],
     ['#ff5c4d', 'LiDAR returns (live sensor data)'],
     ['#ffa31a', 'Unmapped LiDAR returns (possible person / debris)'],
     ['#4fd1ff', 'Trajectory (derived from odometry)'],
@@ -445,16 +461,26 @@ function draw() {
   ctx.beginPath(); ctx.moveTo(CX, 0); ctx.lineTo(CX, canvas.height); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(0, CY); ctx.lineTo(canvas.width, CY); ctx.stroke();
 
-  // known site layout (authored geometry, not a planner output)
+  // known site: SLAM map cells (site source 'map') and boxes (layout, or keep-outs)
+  if (siteCells.length) {
+    ctx.fillStyle = 'rgba(74,82,98,0.6)';
+    const s = Math.max(1, siteCellSize * PX_PER_M);
+    for (const [cx, cy] of siteCells) {
+      const [px, py] = worldToPx(cx - siteCellSize / 2, cy + siteCellSize / 2);
+      ctx.fillRect(px, py, s, s);
+    }
+  }
   ctx.strokeStyle = '#4a5262';
   ctx.fillStyle = 'rgba(74,82,98,0.25)';
   ctx.lineWidth = 1;
   for (const o of siteLayout) {
+    ctx.setLineDash(o.keepout ? [4, 3] : []);
     const [x0, y0] = worldToPx(o.cx - o.hx, o.cy + o.hy);
     const w = o.hx * 2 * PX_PER_M, h = o.hy * 2 * PX_PER_M;
     ctx.fillRect(x0, y0, w, h);
     ctx.strokeRect(x0, y0, w, h);
   }
+  ctx.setLineDash([]);
 
   // learned obstacles (live map: seen by LiDAR, not in the known layout, persistent)
   if (latestState.live_map && latestState.live_map.cells) {
@@ -535,7 +561,7 @@ function draw() {
       const lx = sx + r * Math.cos(worldAngle);
       const ly = sy + r * Math.sin(worldAngle);
       // r < 0.25: the robot's own track housings (masked in vfh_plus_node)
-      ctx.fillStyle = (r > 0.25 && layoutClearance(lx, ly) > MAP_MATCH_M) ? '#ffa31a' : '#ff5c4d';
+      ctx.fillStyle = (r > 0.25 && !isMapped(lx, ly)) ? '#ffa31a' : '#ff5c4d';
       const [px, py] = worldToPx(lx, ly);
       ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
     }

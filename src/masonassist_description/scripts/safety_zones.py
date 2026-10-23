@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """ROS-free human-aware speed limiting for MasonAssist.
 
-The LiDAR cannot tell a person from a wall, but the site layout is known
-(worker_mover.OBSTACLES - the same registry the route planner and dashboard
-use). Returns NOT explained by that layout are treated as possible people /
+The LiDAR cannot tell a person from a wall, but the site is known
+(site_model.SITE - the same site model the route planner and dashboard
+use: the authored layout or the SLAM map). Returns NOT explained by it are treated as possible people /
 dynamic objects ("unmapped"), and the robot's commanded motion is limited by
 how close the nearest unmapped return is in its direction of travel:
 
@@ -22,7 +22,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from worker_mover import OBSTACLES  # noqa: E402
+from site_model import SITE  # noqa: E402
 
 MAP_MATCH_M = 0.3        # return within this of a known box = part of the mapped site
 STOP_M = 1.0
@@ -34,12 +34,11 @@ CORRIDOR_HALF_M = 0.6    # = VFH+ r_effective: VFH already keeps >= this lateral
 ROTATE_STOP_M = 0.8      # turning in place: stop if anything unmapped is this close, any side
 RESUME_CLEAR_S = 1.0
 
-_BOXES = np.array(list(OBSTACLES.values()), dtype=float)  # cx, cy, hx, hy
 
 
 def unmapped_points(robot_ranges, robot_angles, pose, range_min=0.1):
     """Robot-frame (ranges, angles) of finite returns farther than MAP_MATCH_M
-    from every known obstacle box. pose = (x, y, yaw) of base_link in the
+    from every known obstacle. pose = (x, y, yaw) of base_link in the
     map/odom frame (identical here: the robot spawns at the map origin)."""
     r = np.asarray(robot_ranges, dtype=float)
     a = np.asarray(robot_angles, dtype=float)
@@ -50,10 +49,7 @@ def unmapped_points(robot_ranges, robot_angles, pose, range_min=0.1):
     x, y, yaw = pose
     wx = x + r * np.cos(a + yaw)
     wy = y + r * np.sin(a + yaw)
-    dx = np.maximum(np.abs(wx[:, None] - _BOXES[None, :, 0]) - _BOXES[None, :, 2], 0.0)
-    dy = np.maximum(np.abs(wy[:, None] - _BOXES[None, :, 1]) - _BOXES[None, :, 3], 0.0)
-    clearance = np.hypot(dx, dy).min(axis=1)
-    keep = clearance > MAP_MATCH_M
+    keep = SITE.clearance(wx, wy) > MAP_MATCH_M
     return r[keep], a[keep]
 
 
