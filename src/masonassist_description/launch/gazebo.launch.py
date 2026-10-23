@@ -286,6 +286,8 @@ def generate_launch_description():
             # OdometryPublisher output (see model.sdf) - TrackedVehicle's own
             # /model/masonassist/odometry drifts badly under skid-steer slip.
             '/model/masonassist/odometry_sim@nav_msgs/msg/Odometry@gz.msgs.Odometry',
+            # tilt sensor (model.sdf) for the safety supervisor's tilt guard
+            '/imu@sensor_msgs/msg/Imu[gz.msgs.IMU',
         ],
         remappings=[
             ('/model/masonassist/cmd_vel', '/cmd_vel'),
@@ -451,7 +453,8 @@ def generate_launch_description():
         name='safety_supervisor',
         output='screen',
         parameters=[{'use_sim_time': True,
-                     'require_operator_link': LaunchConfiguration('require_operator_link')}],
+                     'require_operator_link': LaunchConfiguration('require_operator_link'),
+                     'payload_kg': ParameterValue(LaunchConfiguration('payload_kg'), value_type=float)}],
     )
 
     return LaunchDescription([

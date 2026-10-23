@@ -17,12 +17,15 @@ directly on each lane of worlds/terrain_test.world:
 
   python3 tools/terrain_test.py                                   # 0/15/25/50 kg, ~80 min
   python3 tools/terrain_test.py --payloads 0 --lanes concrete_10  # quick check
+  python3 tools/terrain_test.py --supervisor                      # tilt-guard checks, through
+                                                                  # the safety supervisor
 
 Gazebo's track model (surface-motion conveyor, mu 0.9) is a rough stand-in
 for real tracks on real ground: treat the numbers as relative, not absolute.
 """
 import argparse
 import csv
+import json
 import math
 import os
 import signal
@@ -34,6 +37,7 @@ import time
 import rclpy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
+from std_msgs.msg import String
 from ros_gz_interfaces.msg import Entity
 from ros_gz_interfaces.srv import SetEntityPose
 
@@ -70,11 +74,14 @@ def quat(roll, pitch, yaw):
 class Rig:
     """Commands /cmd_vel, reads /ground_truth/odom, teleports via set_pose."""
 
-    def __init__(self, node):
+    def __init__(self, node, cmd_topic='/cmd_vel'):
         self.node = node
         self.state = None            # dict: x y z roll pitch yaw v t
         self.cmd = None
-        self.pub = node.create_publisher(Twist, '/cmd_vel', 10)
+        self.sup_seen = set()        # supervisor reasons since reset_sup()
+        self.sup_tilt = 0.0          # largest tilt the supervisor reported
+        self.pub = node.create_publisher(Twist, cmd_topic, 10)
+        node.create_subscription(String, '/supervisor_status', self._sup, 20)
         node.create_subscription(Odometry, '/ground_truth/odom', self._odom, 20)
         self.set_pose = node.create_client(SetEntityPose, '/world/masonassist_world/set_pose')
         threading.Thread(target=self._cmd_loop, daemon=True).start()
@@ -86,6 +93,15 @@ class Rig:
         self.state = {'x': p.x, 'y': p.y, 'z': p.z, 'roll': r, 'pitch': pi, 'yaw': y,
                       'v': math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z) * (1 if v.x >= 0 else -1),
                       't': m.header.stamp.sec + m.header.stamp.nanosec * 1e-9}
+
+    def _sup(self, m):
+        d = json.loads(m.data)
+        self.sup_seen.add(d['reason'])
+        if d.get('tilt_deg') is not None:
+            self.sup_tilt = max(self.sup_tilt, d['tilt_deg'])
+
+    def reset_sup(self):
+        self.sup_seen, self.sup_tilt = set(), 0.0
 
     def _cmd_loop(self):
         while True:
@@ -246,11 +262,53 @@ def test_payload(rig, payload, lanes, rows, profiles):
         time_s=round(samples[-1]['t'] - samples[0]['t'], 1), note=note)
 
 
-def start_stack(payload, gui):
+GUARD_CASES = {50.0: ['concrete_20', 'concrete_30', 'concrete_35'], 0.0: ['concrete_30']}
+
+
+def guard_tests(rig, payload, rows):
+    """Tilt guard through the safety supervisor: the cases that tipped
+    (50 kg on 30/35 deg) and controls (50 kg on 20 deg, empty on 30 deg)."""
+    def row(test, key, samples, reached, extra=''):
+        surface, deg, y = LANES[key]
+        tipped = any(abs(math.degrees(s['pitch'])) > deg + TIP_MARGIN_DEG for s in samples)
+        r = {c: None for c in COLUMNS}
+        r.update(payload_kg=payload, test=test, lane=key, surface=surface, mu=SURFACES[surface][0],
+                 slope_deg=deg, speed=0.25, max_pitch_deg=peak(samples, 'pitch'),
+                 result='TIPPED' if tipped else ('reached' if reached else 'stopped'),
+                 note=f"supervisor: {','.join(sorted(rig.sup_seen))}; max tilt {rig.sup_tilt:.1f}°" + extra)
+        rows.append(r)
+        print('   ', {k: v for k, v in r.items() if v not in (None, '')}, flush=True)
+
+    for key in GUARD_CASES.get(payload, []):
+        surface, deg, y = LANES[key]
+        th, run, h = ramp_geometry(deg)
+        x1 = X0 + run + PLATEAU
+        # down the far ramp from the plateau (the case that tipped at 50 kg)
+        rig.place(x1 - 1.2, y, h + 0.1)
+        rig.reset_sup()
+        samples, reached = rig.run(0.25, lambda s: s['x'] > x1 + run / 2, 40.0)
+        held = rig.hold(5.0)
+        row('guard_downhill', key, samples + held, reached,
+            f"; stopped at x={samples[-1]['x']:.2f} (slope starts at {x1:.2f})")
+        # placed on the slope with zero command (static case)
+        d0 = RAMP_LEN / 4
+        rig.place(X0 + d0 * math.cos(th), y, d0 * math.sin(th) + 0.1, pitch=-th)
+        rig.reset_sup()
+        held = rig.hold(6.0)
+        row('guard_placed', key, held, False)
+        # climb from level ground
+        rig.place(-1.5, y, 0.1)
+        rig.reset_sup()
+        samples, reached = rig.run(0.25, lambda s: s['x'] > X0 + run + 0.6, 60.0)
+        row('guard_climb', key, samples, reached, f"; got to x={samples[-1]['x']:.2f} of {X0 + run + 0.6:.2f}")
+
+
+def start_stack(payload, gui, supervisor=False):
     subprocess.run([os.path.join(WS, 'stop_demo.sh')], capture_output=True, timeout=60)
     log = open(f'/tmp/masonassist_terrain_{payload:g}kg.log', 'w')
     proc = subprocess.Popen(['ros2', 'launch', 'masonassist_description', 'terrain_test.launch.py',
-                             f'payload_kg:={payload:g}', f'headless:={"false" if gui else "true"}'],
+                             f'payload_kg:={payload:g}', f'headless:={"false" if gui else "true"}',
+                             f'supervisor:={"true" if supervisor else "false"}'],
                             stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     return proc
 
@@ -324,11 +382,31 @@ def write_outputs(out, rows, profiles):
     return '\n'.join(lines)
 
 
+def write_guard_outputs(out, rows):
+    with open(os.path.join(out, 'supervisor_guard.csv'), 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=COLUMNS)
+        w.writeheader()
+        w.writerows(rows)
+    lines = ['# Tilt guard through the safety supervisor (simulation)', '',
+             'Same vehicle and terrain as summary.md, but commands go through the safety supervisor '
+             'with its IMU tilt guard (limit 35° up to 25 kg, 20° at 50 kg; creep speed 0.1 m/s within 5° '
+             'of the limit; stop at the limit). Commanded speed 0.25 m/s.', '',
+             '| Payload | Lane | Test | Result | Max pitch | Supervisor |', '|---|---|---|---|---|---|']
+    for r in rows:
+        lines.append(f"| {r['payload_kg']:g} kg | {r['lane']} | {r['test'].replace('guard_', '')} | {r['result']} | "
+                     f"{r['max_pitch_deg']}° | {r['note']} |")
+    with open(os.path.join(out, 'supervisor_guard.md'), 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    return '\n'.join(lines)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--payloads', default='0,15,25,50', help='kg, comma list')
     ap.add_argument('--lanes', default=','.join(LANES), help='ramp lanes to test: ' + ','.join(LANES))
     ap.add_argument('--gui', action='store_true')
+    ap.add_argument('--supervisor', action='store_true',
+                    help='tilt-guard checks through the safety supervisor (writes supervisor_guard.*)')
     ap.add_argument('--out', default=OUT_DEFAULT)
     args = ap.parse_args()
     payloads = [float(p) for p in args.payloads.split(',')]
@@ -340,12 +418,14 @@ def main():
 
     rclpy.init()
     node = rclpy.create_node('terrain_test', parameter_overrides=[])
-    rig = Rig(node)
+    rig = Rig(node, '/cmd_vel_nav' if args.supervisor else '/cmd_vel')
+    if args.supervisor and args.payloads == '0,15,25,50':
+        payloads = sorted(GUARD_CASES, reverse=True)
     threading.Thread(target=rclpy.spin, args=(node,), daemon=True).start()
     rows, profiles = [], []
     for payload in payloads:
         print(f'[{payload:g} kg] starting terrain world...', flush=True)
-        proc = start_stack(payload, args.gui)
+        proc = start_stack(payload, args.gui, args.supervisor)
         try:
             t0 = time.monotonic()
             rig.state = None
@@ -355,7 +435,10 @@ def main():
                 print(f'[{payload:g} kg] no /ground_truth/odom - see /tmp/masonassist_terrain_{payload:g}kg.log')
                 continue
             time.sleep(3.0)
-            test_payload(rig, payload, lanes, rows, profiles)
+            if args.supervisor:
+                guard_tests(rig, payload, rows)
+            else:
+                test_payload(rig, payload, lanes, rows, profiles)
         except Exception as ex:   # record and move on to the next payload
             r = {c: None for c in COLUMNS}
             r.update(payload_kg=payload, test='error', result='error', note=repr(ex))
@@ -364,7 +447,10 @@ def main():
         finally:
             rig.cmd = 0.0
             stop_stack(proc)
-    print('\n' + write_outputs(args.out, rows, profiles))
+    if args.supervisor:
+        print('\n' + write_guard_outputs(args.out, rows))
+    else:
+        print('\n' + write_outputs(args.out, rows, profiles))
     print(f'\nResults: {args.out}')
     os._exit(0)
 

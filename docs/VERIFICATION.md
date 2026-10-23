@@ -37,6 +37,8 @@ Several of these runs predate later changes: the localisation stack (they used p
 | `/clock` bridge frozen | navigation kept driving on live LiDAR, correctly: nothing it uses was stale |
 | `/clock` bridge **and** navigation node frozen | stopped in 1.04 s, moved 0.21 m (`stale_cmd` from the 1.0 s wall-clock backstop) |
 
+**Tilt guard** — the IMU tilt guard was checked on the terrain lanes with the supervisor in the loop: [terrain/supervisor_guard.md](terrain/supervisor_guard.md). Adding the IMU (10 Hz) cost about 3 % simulation speed (real-time factor 0.89 vs 0.92 without it); a bricks job with it active completed with no supervisor stops (151.9 s of sim time, as before).
+
 ## Site and obstacles
 
 **Richer site (current world)** — after adding the site facilities and equipment (15 new obstacles, among them a formwork stack placed on the straight-line brick route), with the safety supervisor in the loop and each run from a clean restart:

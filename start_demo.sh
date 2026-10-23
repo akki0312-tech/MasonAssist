@@ -150,13 +150,15 @@ d = json.load(sys.stdin)
 gone = [k for k, v in (('odom', d['odom']), ('scan', d['scan']), ('supervisor', d['supervisor'])) if not v]
 if d['mission_status'] == 'unknown':
     gone.append('mission_status')
+if (d['supervisor'] or {}).get('reason') in ('stale_imu', 'stale_scan', 'stale_odom'):
+    gone.append(d['supervisor']['reason'].replace('stale_', '') + ' (supervisor sees it stale)')
 print(' '.join(gone))" 2>&1)
 [ -z "$DATA" ] || fail "No data from: $DATA - see $RUN_DIR/*.log"
 
 if $HEADLESS; then
-    echo "Running: all $N components (headless, no Gazebo GUI, odometry=$ODOMETRY, localization=$LOCALIZATION, payload=${PAYLOAD} kg); odometry, LiDAR, supervisor and navigation status flowing"
+    echo "Running: all $N components (headless, no Gazebo GUI, odometry=$ODOMETRY, localization=$LOCALIZATION, payload=${PAYLOAD} kg); odometry, LiDAR, IMU, supervisor and navigation status flowing"
 else
-    echo "Running: all $N components incl. Gazebo GUI (odometry=$ODOMETRY, localization=$LOCALIZATION, payload=${PAYLOAD} kg); odometry, LiDAR, supervisor and navigation status flowing"
+    echo "Running: all $N components incl. Gazebo GUI (odometry=$ODOMETRY, localization=$LOCALIZATION, payload=${PAYLOAD} kg); odometry, LiDAR, IMU, supervisor and navigation status flowing"
 fi
 echo "Dashboard: http://localhost:8080"
 echo "Stop with: ./stop_demo.sh"

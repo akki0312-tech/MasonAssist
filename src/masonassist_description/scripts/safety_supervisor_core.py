@@ -39,11 +39,43 @@ LIDAR_MIN_RANGE_M = 0.1      # sensor <min>; returns inside the body
                              # rectangle are excluded by the lane test below
 SELF_BANDS_DEG = ((-105.8, -96.8), (96.8, 105.8))   # same as vfh_plus_node
 
+# Tilt guard (IMU). Limits from the simulated terrain tests (docs/terrain):
+# up to 25 kg the robot held and drove on everything tested (35 deg static),
+# with 50 kg (load centre ~0.43 m high) it tipped braking down 30 deg and
+# standing on 35 deg, but held and braked fine at 20 deg (tilt reads 20.4 deg
+# there), so the 50 kg limit sits just above 20 deg.
+TILT_LIMITS = ((25.0, 35.0), (50.0, 22.0))   # (payload kg, tilt limit deg), linear between
+TILT_SLOW_BAND_DEG = 5.0     # within this of the limit: creep speed only
+TILT_SLOW_SPEED = 0.1        # m/s - braking from 0.25 m/s on a slope is what tipped it
+TILT_RELEASE_DEG = 2.0       # hysteresis: a tilt stop releases below limit - this
+
+
+def tilt_limit(payload_kg):
+    (p0, t0), (p1, t1) = TILT_LIMITS
+    if payload_kg <= p0:
+        return t0
+    if payload_kg >= p1:
+        return t1
+    return t0 + (t1 - t0) * (payload_kg - p0) / (p1 - p0)
+
+
+def tilt_from_quaternion(x, y, z, w):
+    """Angle between the robot's up axis and vertical, degrees (pitch and
+    roll combined; heading does not matter)."""
+    up_z = 1.0 - 2.0 * (x * x + y * y)
+    return math.degrees(math.acos(max(-1.0, min(1.0, up_z))))
+
 
 class SafetySupervisorCore:
 
-    def __init__(self, require_operator_link=True):
+    def __init__(self, require_operator_link=True, use_imu=False, payload_kg=0.0):
         self.require_operator_link = require_operator_link
+        self.use_imu = use_imu
+        self.tilt_limit = tilt_limit(payload_kg)
+        self.tilt = 0.0              # degrees, from the IMU
+        self.imu_t = None
+        self.tilt_stopped = False    # latched at the limit, released with hysteresis
+        self.tilt_override = False   # operator 'resume' while tilt-stopped: creep allowed
         self.estop = False
         self.hold = False            # after clear_estop: zero until 'resume'
         self.cancelled = False       # after cancel: zero until a new goal
@@ -69,6 +101,8 @@ class SafetySupervisorCore:
                 self.estop, self.hold = False, True
         elif cmd == 'resume':
             self.hold = False
+            if self.tilt_stopped:
+                self.tilt_override = True
         elif cmd == 'cancel':
             self.cancelled = True
 
@@ -77,6 +111,14 @@ class SafetySupervisorCore:
 
     def on_odom(self, now, sim_now=None):
         self.odom_t = (now, now if sim_now is None else sim_now)
+
+    def on_imu(self, qx, qy, qz, qw, now, sim_now=None):
+        self.imu_t = (now, now if sim_now is None else sim_now)
+        self.tilt = tilt_from_quaternion(qx, qy, qz, qw)
+        if self.tilt >= self.tilt_limit:
+            self.tilt_stopped = True
+        elif self.tilt < self.tilt_limit - TILT_RELEASE_DEG:
+            self.tilt_stopped = self.tilt_override = False
 
     def on_heartbeat(self, now):
         self.link_t = now
@@ -117,14 +159,21 @@ class SafetySupervisorCore:
             return 0.0, 0.0, 'stale_scan', False
         if self._stale(self.odom_t, now, sim_now, SENSOR_TIMEOUT_S):
             return 0.0, 0.0, 'stale_odom', False
+        if self.use_imu and self._stale(self.imu_t, now, sim_now, SENSOR_TIMEOUT_S):
+            return 0.0, 0.0, 'stale_imu', False
         if self.require_operator_link and (self.link_t is None or now - self.link_t > LINK_TIMEOUT_S):
             return 0.0, 0.0, 'link_lost', False
+        if self.use_imu and self.tilt_stopped and not self.tilt_override:
+            return 0.0, 0.0, 'tilt_limit', False
         if self._stale(self.cmd_t, now, sim_now, CMD_TIMEOUT_S):
             return 0.0, 0.0, 'stale_cmd', False
 
         lin, ang = self.cmd
-        clamped = abs(lin) > MAX_LINEAR or abs(ang) > MAX_ANGULAR
-        lin = max(-MAX_LINEAR, min(MAX_LINEAR, lin))
+        max_lin = MAX_LINEAR
+        if self.use_imu and (self.tilt_override or self.tilt >= self.tilt_limit - TILT_SLOW_BAND_DEG):
+            max_lin = TILT_SLOW_SPEED
+        clamped = abs(lin) > max_lin or abs(ang) > MAX_ANGULAR
+        lin = max(-max_lin, min(max_lin, lin))
         ang = max(-MAX_ANGULAR, min(MAX_ANGULAR, ang))
         if (lin > 0 and self.front_clear < GUARD_MARGIN_M) or \
                 (lin < 0 and self.rear_clear < GUARD_MARGIN_M):

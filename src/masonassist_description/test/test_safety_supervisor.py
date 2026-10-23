@@ -2,6 +2,8 @@ import math
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 from safety_supervisor_core import (  # noqa: E402
@@ -203,3 +205,92 @@ def test_operator_link_uses_wall_time_only():
     s.on_odom(10.0 + LINK_TIMEOUT_S + 0.1, 5.0)
     s.on_nav_cmd(0.2, 0.0, 10.0 + LINK_TIMEOUT_S + 0.1, 5.0)
     assert s.output(10.0 + LINK_TIMEOUT_S + 0.1, 5.0)[2] == 'link_lost'
+
+
+# ---------------------------------------------------------------------------
+# tilt guard (IMU)
+# ---------------------------------------------------------------------------
+
+from safety_supervisor_core import (  # noqa: E402
+    TILT_RELEASE_DEG, TILT_SLOW_BAND_DEG, TILT_SLOW_SPEED, tilt_from_quaternion, tilt_limit,
+)
+
+
+def _q_pitch(deg):
+    h = math.radians(deg) / 2
+    return (0.0, math.sin(h), 0.0, math.cos(h))
+
+
+def _q_roll(deg):
+    h = math.radians(deg) / 2
+    return (math.sin(h), 0.0, 0.0, math.cos(h))
+
+
+def test_tilt_from_quaternion():
+    assert tilt_from_quaternion(0, 0, 0, 1) == pytest.approx(0.0)
+    assert tilt_from_quaternion(*_q_pitch(-20)) == pytest.approx(20.0)
+    assert tilt_from_quaternion(*_q_roll(10)) == pytest.approx(10.0)
+    h = math.radians(90) / 2                    # heading alone is not tilt
+    assert tilt_from_quaternion(0, 0, math.sin(h), math.cos(h)) == pytest.approx(0.0)
+
+
+def test_tilt_limit_by_payload():
+    assert tilt_limit(0) == tilt_limit(25) == 35.0
+    assert tilt_limit(50) == tilt_limit(80) == 22.0
+    assert tilt_limit(37.5) == pytest.approx(28.5)
+
+
+def _tilted(deg, payload=50.0, cmd=0.2):
+    s = SafetySupervisorCore(use_imu=True, payload_kg=payload)
+    s.on_scan(_ranges(), A_MIN, INC, 0.0)
+    s.on_odom(0.0)
+    s.on_heartbeat(0.0)
+    s.on_imu(*_q_pitch(-deg), 0.0)
+    s.on_nav_cmd(cmd, 0.1, 0.0)
+    return s
+
+
+def test_level_robot_unaffected():
+    assert _tilted(0.0).output(0.1) == (0.2, 0.1, 'ok', False)
+
+
+def test_slow_band_clamps_linear_speed():
+    limit = tilt_limit(50)
+    s = _tilted(limit - TILT_SLOW_BAND_DEG + 1, cmd=0.25)
+    assert s.output(0.1) == (TILT_SLOW_SPEED, 0.1, 'ok', True)
+
+
+def test_at_the_limit_stop_then_release_with_hysteresis():
+    limit = tilt_limit(50)
+    s = _tilted(limit + 0.5)
+    assert s.output(0.1)[:3] == (0.0, 0.0, 'tilt_limit')
+    s.on_imu(*_q_pitch(-(limit - TILT_RELEASE_DEG / 2)), 0.05)    # inside the hysteresis
+    assert s.output(0.1)[2] == 'tilt_limit'
+    s.on_imu(*_q_pitch(-(limit - TILT_RELEASE_DEG - 0.5)), 0.05)  # below it: released
+    assert s.output(0.1)[2] == 'ok'
+
+
+def test_same_tilt_is_fine_without_payload():
+    assert _tilted(30.0, payload=0.0, cmd=0.2).output(0.1)[2] == 'ok'
+    assert _tilted(30.0, payload=50.0).output(0.1)[2] == 'tilt_limit'
+
+
+def test_resume_allows_creeping_off_the_slope():
+    s = _tilted(25.0)
+    assert s.output(0.1)[2] == 'tilt_limit'
+    s.on_mission_cmd('resume')
+    s.on_nav_cmd(-0.25, 0.0, 0.05)
+    assert s.output(0.1) == (-TILT_SLOW_SPEED, 0.0, 'ok', True)
+    s.on_imu(*_q_pitch(-5.0), 0.08)               # off the slope: back to normal
+    s.on_nav_cmd(0.2, 0.0, 0.08)
+    assert s.output(0.1)[:3] == (0.2, 0.0, 'ok')
+
+
+def test_stale_imu_stops_when_imu_is_used():
+    s = _tilted(0.0)
+    s.on_scan(_ranges(), A_MIN, INC, 0.6)
+    s.on_odom(0.6)
+    s.on_heartbeat(0.6)
+    s.on_nav_cmd(0.2, 0.0, 0.6)
+    assert s.output(0.6)[:3] == (0.0, 0.0, 'stale_imu')
+    assert SafetySupervisorCore().use_imu is False      # off unless enabled (older setups)

@@ -226,8 +226,11 @@ function renderSupervisor() {
   const labels = {ok: 'OK', estop: 'E-STOP', hold_after_estop: 'HOLD - press Resume',
     cancelled: 'STOPPED - cancelled', stale_scan: 'STOP - LiDAR data stale',
     stale_odom: 'STOP - odometry stale', link_lost: 'STOP - operator link lost',
-    stale_cmd: 'zero - no navigation command', collision_guard: 'BLOCKED - obstacle at body'};
-  el.textContent = (labels[s.reason] || s.reason) + (s.clamped ? ' (speed clamped)' : '');
+    stale_cmd: 'zero - no navigation command', collision_guard: 'BLOCKED - obstacle at body',
+    tilt_limit: 'STOP - tilt limit (press Resume to creep off)', stale_imu: 'STOP - tilt sensor stale'};
+  const tilt = (s.tilt_deg !== null && s.tilt_deg !== undefined)
+    ? ` · tilt ${s.tilt_deg.toFixed(1)}° (limit ${s.tilt_limit_deg.toFixed(0)}°)` : '';
+  el.textContent = (labels[s.reason] || s.reason) + (s.clamped ? ' (speed clamped)' : '') + tilt;
   el.style.color = s.reason === 'ok' ? '#5fd38a' : (s.reason === 'stale_cmd' ? '' : '#ff6b6b');
 }
 

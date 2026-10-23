@@ -19,7 +19,7 @@ from geometry_msgs.msg import Point, Twist
 from rclpy.clock import Clock, ClockType
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Imu, LaserScan
 from std_msgs.msg import String
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -33,7 +33,11 @@ class SafetySupervisor(Node):
     def __init__(self):
         super().__init__('safety_supervisor')
         self.declare_parameter('require_operator_link', True)
-        self.core = SafetySupervisorCore(self.get_parameter('require_operator_link').value)
+        self.declare_parameter('use_imu', True)          # tilt guard from /imu
+        self.declare_parameter('payload_kg', 0.0)        # sets the tilt limit
+        self.core = SafetySupervisorCore(self.get_parameter('require_operator_link').value,
+                                         self.get_parameter('use_imu').value,
+                                         float(self.get_parameter('payload_kg').value))
         self.last_reason = None
 
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -43,6 +47,7 @@ class SafetySupervisor(Node):
         self.create_subscription(Point, '/goal_pose', lambda _m: self.core.on_goal(), 10)
         self.create_subscription(Odometry, '/odom', lambda _m: self.core.on_odom(*self._now()), 10)
         self.create_subscription(LaserScan, '/scan', self._scan_cb, 10)
+        self.create_subscription(Imu, '/imu', self._imu_cb, 20)
         self.create_subscription(String, '/operator_heartbeat',
                                  lambda _m: self.core.on_heartbeat(time.monotonic()), 10)
         # steady clock: keep publishing even if sim time (/clock) stops
@@ -60,6 +65,10 @@ class SafetySupervisor(Node):
     def _mission_cmd_cb(self, msg):
         self.core.on_mission_cmd(msg.data.strip().lower())
 
+    def _imu_cb(self, msg):
+        q = msg.orientation
+        self.core.on_imu(q.x, q.y, q.z, q.w, *self._now())
+
     def _scan_cb(self, msg):
         self.core.on_scan(msg.ranges, msg.angle_min, msg.angle_increment, *self._now())
 
@@ -72,6 +81,8 @@ class SafetySupervisor(Node):
         self.status_pub.publish(String(data=json.dumps({
             'reason': reason, 'clamped': clamped,
             'front_clear_m': None if self.core.front_clear == float('inf') else round(self.core.front_clear, 2),
+            'tilt_deg': round(self.core.tilt, 1) if self.core.use_imu else None,
+            'tilt_limit_deg': round(self.core.tilt_limit, 1) if self.core.use_imu else None,
         })))
         if reason != self.last_reason:
             if reason == 'ok':

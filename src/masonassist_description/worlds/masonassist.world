@@ -13,6 +13,7 @@
     <plugin name="gz::sim::systems::SceneBroadcaster" filename="gz-sim-scene-broadcaster-system"/>
     <plugin name="gz::sim::systems::Contact" filename="gz-sim-contact-system"/>
     <!-- Required for any <sensor> element (e.g. the LiDAR) to activate at all -->
+    <plugin name="gz::sim::systems::Imu" filename="gz-sim-imu-system"/>
     <plugin name="gz::sim::systems::Sensors" filename="gz-sim-sensors-system">
       <render_engine>ogre2</render_engine>
     </plugin>

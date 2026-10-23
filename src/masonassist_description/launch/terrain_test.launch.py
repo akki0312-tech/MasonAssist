@@ -3,8 +3,11 @@
 Gazebo with worlds/terrain_test.world, the robot (optionally loaded:
 payload_kg), and only the bridges the test harness needs: /cmd_vel in,
 /ground_truth/odom (full 3-D pose) and /clock out, and the set_pose
-service to place the robot at each lane. No navigation and no safety
-supervisor: this measures what the vehicle itself can do on slopes.
+service to place the robot at each lane. No navigation: this measures what
+the vehicle itself can do on slopes.
+
+supervisor:=true adds the safety supervisor (and the LiDAR, /odom and IMU it
+needs): commands then go to /cmd_vel_nav, so its tilt guard can be tested.
 """
 import os
 import sys
@@ -13,9 +16,11 @@ import tempfile
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, SetEnvironmentVariable
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression, TextSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -40,6 +45,7 @@ def generate_launch_description():
         DeclareLaunchArgument('payload_kg', default_value='0'),
         DeclareLaunchArgument('payload_cog_height', default_value=''),
         DeclareLaunchArgument('headless', default_value='true'),
+        DeclareLaunchArgument('supervisor', default_value='false'),
         SetEnvironmentVariable('GZ_SIM_RESOURCE_PATH', resource_path),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(
@@ -53,8 +59,21 @@ def generate_launch_description():
              arguments=['/world/masonassist_world/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
                         '/model/masonassist/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
                         '/model/masonassist/odometry_sim@nav_msgs/msg/Odometry@gz.msgs.Odometry',
-                        '/world/masonassist_world/set_pose@ros_gz_interfaces/srv/SetEntityPose'],
+                        '/world/masonassist_world/set_pose@ros_gz_interfaces/srv/SetEntityPose',
+                        '/imu@sensor_msgs/msg/Imu[gz.msgs.IMU',
+                        '/scan_raw@sensor_msgs/msg/LaserScan@gz.msgs.LaserScan'],
              remappings=[('/world/masonassist_world/clock', '/clock'),
                          ('/model/masonassist/cmd_vel', '/cmd_vel'),
                          ('/model/masonassist/odometry_sim', '/ground_truth/odom')]),
+        # --- supervisor:=true: the safety supervisor between the harness and the tracks
+        Node(package='masonassist_description', executable='scan_frame_fix.py', name='scan_frame_fix',
+             parameters=[{'use_sim_time': True}], condition=IfCondition(LaunchConfiguration('supervisor'))),
+        Node(package='masonassist_description', executable='odom_drift.py', name='odom_drift',
+             parameters=[{'use_sim_time': True, 'mode': 'perfect'}],
+             condition=IfCondition(LaunchConfiguration('supervisor'))),
+        Node(package='masonassist_description', executable='safety_supervisor.py', name='safety_supervisor',
+             output='screen',
+             parameters=[{'use_sim_time': True, 'require_operator_link': False,
+                          'payload_kg': ParameterValue(LaunchConfiguration('payload_kg'), value_type=float)}],
+             condition=IfCondition(LaunchConfiguration('supervisor'))),
     ])

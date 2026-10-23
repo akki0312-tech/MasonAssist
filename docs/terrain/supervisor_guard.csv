@@ -1,0 +1,13 @@
+payload_kg,test,lane,surface,mu,slope_deg,speed,result,time_s,slip,max_pitch_deg,max_roll_deg,stop_dist_m,slide_m,side_drift_m_per_m,note
+50.0,guard_downhill,concrete_20,concrete,1.0,20,0.25,reached,,,27.2,,,,,"supervisor: ok,tilt_limit; max tilt 27.1°; stopped at x=8.64 (slope starts at 6.76)"
+50.0,guard_placed,concrete_20,concrete,1.0,20,0.25,stopped,,,20.4,,,,,supervisor: ok; max tilt 20.4°
+50.0,guard_climb,concrete_20,concrete,1.0,20,0.25,reached,,,20.4,,,,,supervisor: ok; max tilt 20.4°; got to x=4.36 of 4.36
+50.0,guard_downhill,concrete_30,concrete,1.0,30,0.25,TIPPED,,,88.7,,,,,"supervisor: ok,tilt_limit; max tilt 175.9°; stopped at x=8.24 (slope starts at 6.46)"
+50.0,guard_placed,concrete_30,concrete,1.0,30,0.25,stopped,,,30.2,,,,,supervisor: tilt_limit; max tilt 30.4°
+50.0,guard_climb,concrete_30,concrete,1.0,30,0.25,stopped,,,22.9,,,,,"supervisor: ok,tilt_limit; max tilt 22.9°; got to x=0.09 of 4.06"
+50.0,guard_downhill,concrete_35,concrete,1.0,35,0.25,TIPPED,,,89.0,,,,,"supervisor: ok,tilt_limit; max tilt 176.1°; stopped at x=7.94 (slope starts at 6.28)"
+50.0,guard_placed,concrete_35,concrete,1.0,35,0.25,stopped,,,25.7,,,,,supervisor: tilt_limit; max tilt 35.3°
+50.0,guard_climb,concrete_35,concrete,1.0,35,0.25,stopped,,,0.5,,,,,supervisor: ok; max tilt 0.5°; got to x=-0.25 of 3.88
+0.0,guard_downhill,concrete_30,concrete,1.0,30,0.25,reached,,,33.1,,,,,supervisor: ok; max tilt 32.9°; stopped at x=8.20 (slope starts at 6.46)
+0.0,guard_placed,concrete_30,concrete,1.0,30,0.25,stopped,,,30.4,,,,,supervisor: ok; max tilt 30.4°
+0.0,guard_climb,concrete_30,concrete,1.0,30,0.25,reached,,,30.4,,,,,supervisor: ok; max tilt 30.4°; got to x=4.07 of 4.06
